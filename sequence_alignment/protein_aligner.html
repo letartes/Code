@@ -1,0 +1,1270 @@
+<!-- Protein Sequence Alignment Tool - embed this entire block in a Squarespace Code Block -->
+<!-- All calculations run in the visitor's browser. No sequence data is transmitted. -->
+<!-- External requests: none. Pure vanilla JS, no React, no Babel, no external libraries. -->
+
+<style>
+  #pat-root {
+    font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: #0b1020;
+    color: #e8edf7;
+    padding: 24px;
+    border-radius: 18px;
+    box-sizing: border-box;
+    width: 100%;
+  }
+  #pat-root *, #pat-root *::before, #pat-root *::after { box-sizing: border-box; }
+
+  .pat-card {
+    background: rgba(19,26,43,0.95);
+    border: 1px solid #2b3550;
+    border-radius: 18px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .pat-lbl {
+    font-size: 14px;
+    font-weight: 600;
+    color: #7cc4ff;
+    margin-bottom: 14px;
+    display: block;
+  }
+
+  /* Header */
+  .pat-header {
+    background: rgba(19,26,43,0.95);
+    border: 1px solid #2b3550;
+    border-radius: 18px;
+    padding: 22px 28px;
+    margin-bottom: 16px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .pat-header h1 { margin: 0; font-size: 22px; font-weight: 700; color: #e8edf7; letter-spacing: -0.3px; }
+  .pat-header p  { margin: 5px 0 0; color: #aab6cf; font-size: 13px; }
+
+  /* Privacy */
+  .pat-privacy {
+    background: rgba(142,240,194,0.08);
+    border: 1px solid rgba(142,240,194,0.3);
+    border-radius: 14px;
+    padding: 11px 16px;
+    margin-bottom: 16px;
+    color: #8ef0c2;
+    font-size: 13px;
+  }
+
+  /* Error */
+  .pat-error {
+    background: rgba(255,142,142,0.08);
+    border: 1px solid rgba(255,142,142,0.4);
+    border-radius: 12px;
+    padding: 11px 16px;
+    margin-bottom: 16px;
+    color: #ff8e8e;
+    font-size: 13px;
+    display: none;
+  }
+
+  /* Sequence panels */
+  .pat-seq-panels { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+  .pat-seq-panel {
+    background: #1a2338;
+    border: 1px solid #2b3550;
+    border-radius: 12px;
+    padding: 12px 14px;
+  }
+  .pat-seq-panel-hdr {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .pat-seq-num {
+    font-size: 12px;
+    font-weight: 700;
+    color: #7cc4ff;
+    background: rgba(124,196,255,0.1);
+    border: 1px solid rgba(124,196,255,0.25);
+    border-radius: 8px;
+    padding: 2px 9px;
+  }
+  .pat-name-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .pat-name-row label { font-size: 12px; color: #aab6cf; white-space: nowrap; }
+  .pat-name-input {
+    flex: 1;
+    background: #131a2b;
+    color: #e8edf7;
+    border: 1px solid #2b3550;
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-family: inherit;
+  }
+  .pat-name-input:focus { outline: 2px solid #7cc4ff; outline-offset: 1px; }
+  .pat-seq-text {
+    width: 100%;
+    height: 80px;
+    resize: vertical;
+    background: #131a2b;
+    color: #e8edf7;
+    border: 1px solid #2b3550;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .pat-seq-text:focus { outline: 2px solid #7cc4ff; outline-offset: 1px; }
+  .pat-seq-mini-btns {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  /* Buttons */
+  .pat-btn {
+    background: linear-gradient(180deg,#22304d,#1b2740);
+    color: #e8edf7;
+    border: 1px solid #2b3550;
+    border-radius: 12px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    transition: border-color 0.15s;
+  }
+  .pat-btn:hover { border-color: #7cc4ff; }
+  .pat-btn:disabled { opacity: 0.4; cursor: default; }
+  .pat-btn-sm {
+    background: linear-gradient(180deg,#22304d,#1b2740);
+    color: #aab6cf;
+    border: 1px solid #2b3550;
+    border-radius: 8px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: inherit;
+    transition: border-color 0.15s;
+  }
+  .pat-btn-sm:hover { border-color: #7cc4ff; color: #e8edf7; }
+  .pat-btn-remove {
+    background: transparent;
+    color: #ff8e8e;
+    border: 1px solid rgba(255,142,142,0.3);
+    border-radius: 8px;
+    padding: 3px 9px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+    font-family: inherit;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .pat-btn-remove:hover { background: rgba(255,142,142,0.1); border-color: #ff8e8e; }
+  .pat-btn-remove:disabled { opacity: 0.25; cursor: default; }
+  .pat-btn-run {
+    background: linear-gradient(180deg,#193650,#163048);
+    color: #7cc4ff;
+    border: 1px solid #7cc4ff;
+    border-radius: 12px;
+    padding: 13px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: inherit;
+    width: 100%;
+    margin-top: 4px;
+    transition: opacity 0.15s;
+  }
+  .pat-btn-run:hover { opacity: 0.85; }
+  .pat-btn-export {
+    background: linear-gradient(180deg,#193650,#163048);
+    color: #8ef0c2;
+    border: 1px solid #8ef0c2;
+    border-radius: 12px;
+    padding: 8px 16px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    transition: opacity 0.15s;
+  }
+  .pat-btn-export:hover { opacity: 0.85; }
+  .pat-add-row { display: flex; gap: 10px; flex-wrap: wrap; }
+
+  /* Options grid */
+  .pat-opts-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 10px 14px;
+    align-items: center;
+    margin-bottom: 4px;
+  }
+  .pat-opts-grid label { font-size: 13px; font-weight: 500; color: #aab6cf; white-space: nowrap; }
+  .pat-select {
+    background: #1a2338;
+    color: #e8edf7;
+    border: 1px solid #2b3550;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 13px;
+    font-family: inherit;
+    max-width: 280px;
+  }
+  .pat-select:focus { outline: 2px solid #7cc4ff; outline-offset: 1px; }
+  .pat-num-input {
+    background: #1a2338;
+    color: #e8edf7;
+    border: 1px solid #2b3550;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 13px;
+    font-family: ui-monospace, monospace;
+    width: 80px;
+  }
+  .pat-num-input:focus { outline: 2px solid #7cc4ff; outline-offset: 1px; }
+  .pat-radio-group { display: flex; gap: 18px; align-items: center; }
+  .pat-radio-group label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #e8edf7; cursor: pointer; }
+  .pat-radio-group input[type=radio] { accent-color: #7cc4ff; }
+  .pat-checkbox-row { display: flex; align-items: center; gap: 8px; }
+  .pat-checkbox-row input[type=checkbox] { accent-color: #7cc4ff; width: 15px; height: 15px; }
+  .pat-checkbox-row label { font-size: 13px; color: #e8edf7; cursor: pointer; }
+  .pat-divider { height: 1px; background: #2b3550; margin: 8px 0; grid-column: 1/-1; }
+
+  /* CDR note */
+  .pat-cdr-note {
+    background: rgba(142,240,194,0.06);
+    border: 1px solid rgba(142,240,194,0.2);
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #8ef0c2;
+    margin-top: 6px;
+  }
+
+  /* Stats boxes */
+  .pat-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4,1fr);
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .pat-stat {
+    background: #1a2338;
+    border: 1px solid #2b3550;
+    border-radius: 14px;
+    padding: 12px 14px;
+    text-align: center;
+  }
+  .pat-stat-val { font-size: 15px; font-weight: 800; color: #7cc4ff; font-family: ui-monospace, monospace; }
+  .pat-stat-lbl { font-size: 11px; color: #aab6cf; margin-top: 4px; }
+
+  /* Results terminal */
+  .pat-results-hdr {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .pat-results-hdr h2 { margin: 0; font-size: 16px; font-weight: 700; color: #7cc4ff; }
+  .pat-results-hdr p  { margin: 3px 0 0; font-size: 12px; color: #aab6cf; }
+  .pat-terminal {
+    background: #0d1117;
+    border: 1px solid #2b3550;
+    border-radius: 12px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    max-height: 560px;
+    overflow-y: auto;
+  }
+  .pat-terminal pre {
+    margin: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.65;
+    white-space: pre;
+    color: #cdd6f4;
+  }
+
+  /* Syntax colors */
+  .pat-r-header   { color: #7cc4ff;  font-weight: bold; }
+  .pat-r-stats    { color: #aab6cf; }
+  .pat-r-sep      { color: #2b3550; }
+  .pat-r-cdr1     { color: #f38ba8; font-weight: bold; }
+  .pat-r-cdr2     { color: #fab387; font-weight: bold; }
+  .pat-r-cdr3     { color: #8ef0c2; font-weight: bold; }
+  .pat-r-fr       { color: #89dceb; }
+  .pat-r-match    { color: #e8edf7; }
+  .pat-r-mismatch { color: #f9e2af; }
+  .pat-r-gap      { color: #4a5a7a; }
+  .pat-r-pos      { color: #7cc4ff; }
+  .pat-r-cons     { color: #8ef0c2; }
+
+  /* Legend chips */
+  .pat-legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .pat-chip {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 20px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid;
+  }
+  .pat-chip-cdr1     { color: #f38ba8; border-color: rgba(243,139,168,0.3); }
+  .pat-chip-cdr2     { color: #fab387; border-color: rgba(250,179,135,0.3); }
+  .pat-chip-cdr3     { color: #8ef0c2; border-color: rgba(142,240,194,0.3); }
+  .pat-chip-fr       { color: #89dceb; border-color: rgba(137,220,235,0.3); }
+  .pat-chip-match    { color: #e8edf7; border-color: rgba(232,237,247,0.2); }
+  .pat-chip-mismatch { color: #f9e2af; border-color: rgba(249,226,175,0.3); }
+  .pat-chip-gap      { color: #4a5a7a; border-color: rgba(74,90,122,0.4); }
+
+  @media (max-width: 680px) {
+    .pat-stats-grid { grid-template-columns: repeat(2,1fr); }
+    .pat-opts-grid  { grid-template-columns: 1fr; }
+    #pat-root       { padding: 14px; }
+  }
+</style>
+
+<div id="pat-root">
+
+  <!-- Header -->
+  <div class="pat-header">
+    <div>
+      <h1>Protein Sequence Alignment Tool</h1>
+      <p>Pairwise &amp; multiple sequence alignment  |  BLOSUM62 scoring  |  CDR region annotation</p>
+    </div>
+  </div>
+
+  <!-- Privacy -->
+  <div class="pat-privacy">
+    <strong>100% local processing.</strong> All alignments run entirely in your browser using plain JavaScript.
+    No sequence data is ever transmitted, uploaded, or sent to any server or third-party service.
+  </div>
+
+  <!-- 1. Sequences -->
+  <div class="pat-card">
+    <span class="pat-lbl">1. Sequences</span>
+    <div class="pat-seq-panels" id="pat-seq-panels"></div>
+    <div class="pat-add-row">
+      <button class="pat-btn" onclick="patAddPanel()">+ Add Sequence</button>
+      <button class="pat-btn" onclick="patLoadMultiFasta()">Load Multi-FASTA</button>
+    </div>
+  </div>
+
+  <!-- 2. Options -->
+  <div class="pat-card">
+    <span class="pat-lbl">2. Alignment Options</span>
+    <div class="pat-opts-grid">
+      <label>Chain type</label>
+      <select class="pat-select" id="pat-chain">
+        <option value="H">H -- Heavy chain (VH)</option>
+        <option value="K">K -- Kappa light (Vk)</option>
+        <option value="L">L -- Lambda light (Vl)</option>
+        <option value="generic">Generic protein (no CDR annotation)</option>
+      </select>
+
+      <label>CDR scheme</label>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <select class="pat-select" id="pat-scheme">
+          <option value="kabat">Kabat</option>
+          <option value="chothia">Chothia</option>
+          <option value="imgt">IMGT</option>
+        </select>
+        <div class="pat-checkbox-row">
+          <input type="checkbox" id="pat-annotate" checked>
+          <label for="pat-annotate">Annotate CDR regions</label>
+        </div>
+      </div>
+
+      <div class="pat-divider"></div>
+
+      <label>Alignment mode</label>
+      <div class="pat-radio-group">
+        <label><input type="radio" name="pat-mode" value="local" checked> Local (Smith-Waterman)</label>
+        <label><input type="radio" name="pat-mode" value="global"> Global (Needleman-Wunsch)</label>
+      </div>
+
+      <label>Gap open</label>
+      <input type="number" class="pat-num-input" id="pat-gapopen" value="-11" min="-20" max="0">
+
+      <label>Gap extend</label>
+      <input type="number" class="pat-num-input" id="pat-gapext" value="-1" min="-10" max="0">
+    </div>
+    <div class="pat-cdr-note" id="pat-cdr-note">
+      CDR annotation is built-in - no external packages needed. Kabat anchors are reliable for human/humanized VH, Vk, and Vl sequences.
+    </div>
+    <button class="pat-btn-run" onclick="patRun()">Run Alignment</button>
+  </div>
+
+  <!-- Error -->
+  <div class="pat-error" id="pat-error"></div>
+
+  <!-- Results -->
+  <div id="pat-results"></div>
+
+</div>
+
+<!-- Hidden file input -->
+<input type="file" id="pat-file-input" accept=".fa,.fasta,.faa,.txt,*" style="display:none">
+
+<script>
+(function () {
+'use strict';
+
+// -----------------------------------------------------------------------------
+// BLOSUM62
+// -----------------------------------------------------------------------------
+var BLOSUM62_RAW = [
+  '   A  R  N  D  C  Q  E  G  H  I  L  K  M  F  P  S  T  W  Y  V  B  Z  X  *',
+  'A  4 -1 -2 -2  0 -1 -1  0 -2 -1 -1 -1 -1 -2 -1  1  0 -3 -2  0 -2 -1  0 -4',
+  'R -1  5  0 -2 -3  1  0 -2  0 -3 -2  2 -1 -3 -2 -1 -1 -3 -2 -3 -1  0 -1 -4',
+  'N -2  0  6  1 -3  0  0  0  1 -3 -3  0 -2 -3 -2  1  0 -4 -2 -3  3  0 -1 -4',
+  'D -2 -2  1  6 -3  0  2 -1 -1 -3 -4 -1 -3 -3 -1  0 -1 -4 -3 -3  4  1 -1 -4',
+  'C  0 -3 -3 -3  9 -3 -4 -3 -3 -1 -1 -3 -1 -2 -3 -1 -1 -2 -2 -1 -3 -3 -2 -4',
+  'Q -1  1  0  0 -3  5  2 -2  0 -3 -2  1  0 -3 -1  0 -1 -2 -1 -2  0  3 -1 -4',
+  'E -1  0  0  2 -4  2  5 -2  0 -3 -3  1 -2 -3 -1  0 -1 -3 -2 -2  1  4 -1 -4',
+  'G  0 -2  0 -1 -3 -2 -2  6 -2 -4 -4 -2 -3 -3 -2  0 -2 -2 -3 -3 -1 -2 -1 -4',
+  'H -2  0  1 -1 -3  0  0 -2  8 -3 -3 -1 -2 -1 -2 -1 -2 -2  2 -3  0  0 -1 -4',
+  'I -1 -3 -3 -3 -1 -3 -3 -4 -3  4  2 -3  1  0 -3 -2 -1 -3 -1  3 -3 -3 -1 -4',
+  'L -1 -2 -3 -4 -1 -2 -3 -4 -3  2  4 -2  2  0 -3 -2 -1 -2 -1  1 -4 -3 -1 -4',
+  'K -1  2  0 -1 -3  1  1 -2 -1 -3 -2  5 -1 -3 -1  0 -1 -3 -2 -2  0  1 -1 -4',
+  'M -1 -1 -2 -3 -1  0 -2 -3 -2  1  2 -1  5  0 -2 -1 -1 -1 -1  1 -3 -1 -1 -4',
+  'F -2 -3 -3 -3 -2 -3 -3 -3 -1  0  0 -3  0  6 -4 -2 -2  1  3 -1 -3 -3 -1 -4',
+  'P -1 -2 -2 -1 -3 -1 -1 -2 -2 -3 -3 -1 -2 -4  7 -1 -1 -4 -3 -2 -2 -1 -2 -4',
+  'S  1 -1  1  0 -1  0  0  0 -1 -2 -2  0 -1 -2 -1  4  1 -3 -2 -2  0  0  0 -4',
+  'T  0 -1  0 -1 -1 -1 -1 -2 -2 -1 -1 -1 -1 -2 -1  1  5 -2 -2  0 -1 -1  0 -4',
+  'W -3 -3 -4 -4 -2 -2 -3 -2 -2 -3 -2 -3 -1  1 -4 -3 -2 11  2 -3 -4 -3 -2 -4',
+  'Y -2 -2 -2 -3 -2 -1 -2 -3  2 -1 -1 -2 -1  3 -3 -2 -2  2  7 -1 -2 -2 -1 -4',
+  'V  0 -3 -3 -3 -1 -2 -2 -3 -3  3  1 -2  1 -1 -2 -2  0 -3 -1  4 -3 -2 -1 -4',
+  'B -2 -1  3  4 -3  0  1 -1  0 -3 -4  0 -3 -3 -2  0 -1 -4 -2 -3  4  1 -1 -4',
+  'Z -1  0  0  1 -3  3  4 -2  0 -3 -3  1 -1 -3 -1  0 -1 -3 -2 -2  1  4 -1 -4',
+  'X  0 -1 -1 -1 -2 -1 -1 -1 -1 -1 -1 -1 -1 -1 -2  0  0 -2 -1 -1 -1 -1 -1 -4',
+  '* -4 -4 -4 -4 -4 -4 -4 -4 -4 -4 -4 -4 -4 -4 -4 -4 -4 -4 -4 -4 -4 -4 -4  1'
+].join('\n');
+
+var BLOSUM62 = (function () {
+  var m = {}, lines = BLOSUM62_RAW.trim().split('\n');
+  var hdr = lines[0].trim().split(/\s+/);
+  for (var li = 1; li < lines.length; li++) {
+    var parts = lines[li].trim().split(/\s+/);
+    var row = parts[0];
+    for (var ci = 0; ci < hdr.length; ci++) {
+      m[row + hdr[ci]] = parseInt(parts[ci + 1], 10);
+    }
+  }
+  return m;
+}());
+
+function blosumScore(a, b) {
+  a = a.toUpperCase(); b = b.toUpperCase();
+  var v = BLOSUM62[a + b];
+  if (v !== undefined) return v;
+  v = BLOSUM62[b + a];
+  return v !== undefined ? v : -4;
+}
+
+// -----------------------------------------------------------------------------
+// Pairwise alignment -- Smith-Waterman / Needleman-Wunsch with affine gaps
+// -----------------------------------------------------------------------------
+var NEG_INF = -1e9;
+
+function alignSequences(seq1, seq2, mode, gapOpen, gapExtend) {
+  mode = mode || 'local';
+  gapOpen   = gapOpen   !== undefined ? gapOpen   : -11;
+  gapExtend = gapExtend !== undefined ? gapExtend : -1;
+
+  var m = seq1.length, n = seq2.length;
+  var stride = n + 1;
+  var sz = (m + 1) * stride;
+  var M  = new Float64Array(sz); M.fill(NEG_INF);
+  var IX = new Float64Array(sz); IX.fill(NEG_INF);
+  var IY = new Float64Array(sz); IY.fill(NEG_INF);
+  var TB = new Uint8Array(sz);
+  // TB: 0=none, 1=diag(M), 2=up(IX), 3=left(IY), 4=stop(local)
+
+  M[0] = 0;
+  for (var i = 1; i <= m; i++) {
+    if (mode === 'global') { IX[i*stride] = gapOpen + (i-1)*gapExtend; M[i*stride] = IX[i*stride]; }
+    TB[i*stride] = 2;
+  }
+  for (var j = 1; j <= n; j++) {
+    if (mode === 'global') { IY[j] = gapOpen + (j-1)*gapExtend; M[j] = IY[j]; }
+    TB[j] = 3;
+  }
+
+  var bestScore = 0, bestI = 0, bestJ = 0;
+
+  for (var ri = 1; ri <= m; ri++) {
+    for (var ci = 1; ci <= n; ci++) {
+      var s = blosumScore(seq1[ri-1], seq2[ci-1]);
+      var cur = ri*stride + ci;
+      var upIx = M[(ri-1)*stride + ci] + gapOpen;
+      var extIx = IX[(ri-1)*stride + ci] + gapExtend;
+      IX[cur] = upIx > extIx ? upIx : extIx;
+      var ltIy = M[ri*stride + ci-1] + gapOpen;
+      var extIy = IY[ri*stride + ci-1] + gapExtend;
+      IY[cur] = ltIy > ltIy ? ltIy : extIy; // min fix below
+      IY[cur] = ltIy > extIy ? ltIy : extIy;
+      var diag = M[(ri-1)*stride + ci-1] + s;
+      var best = diag, tb = 1;
+      if (IX[cur] > best) { best = IX[cur]; tb = 2; }
+      if (IY[cur] > best) { best = IY[cur]; tb = 3; }
+      if (mode === 'local' && best < 0) { best = 0; tb = 4; }
+      M[cur] = best;
+      TB[cur] = tb;
+      if (mode === 'local' && best > bestScore) { bestScore = best; bestI = ri; bestJ = ci; }
+    }
+  }
+
+  var ti = mode === 'local' ? bestI : m;
+  var tj = mode === 'local' ? bestJ : n;
+  var finalScore = mode === 'local' ? bestScore : M[m*stride + n];
+
+  var aln1 = [], aln2 = [];
+  while (ti > 0 || tj > 0) {
+    var tb2 = TB[ti*stride + tj];
+    if (tb2 === 4) break;
+    if (mode === 'local' && M[ti*stride + tj] <= 0 && ti > 0 && tj > 0) break;
+    if (tb2 === 1) { aln1.push(seq1[ti-1]); aln2.push(seq2[tj-1]); ti--; tj--; }
+    else if (tb2 === 2) { aln1.push(seq1[ti-1]); aln2.push('-'); ti--; }
+    else if (tb2 === 3) { aln1.push('-'); aln2.push(seq2[tj-1]); tj--; }
+    else break;
+  }
+  return [aln1.reverse().join(''), aln2.reverse().join(''), finalScore];
+}
+
+// -----------------------------------------------------------------------------
+// Multiple Sequence Alignment -- center-star progressive
+// -----------------------------------------------------------------------------
+function multipleSequenceAlignment(seqsNamed, mode, gapOpen, gapExtend) {
+  var names = seqsNamed.map(function(x){return x[0];});
+  var seqs  = seqsNamed.map(function(x){return x[1];});
+  var n = seqs.length;
+  if (n === 2) {
+    var r = alignSequences(seqs[0], seqs[1], mode, gapOpen, gapExtend);
+    return [[[names[0], r[0]], [names[1], r[1]]], r[2]];
+  }
+  // Pairwise scores
+  var pairSc = [];
+  for (var i = 0; i < n; i++) { pairSc.push([]); for (var j2 = 0; j2 < n; j2++) pairSc[i].push(0); }
+  for (var i = 0; i < n; i++) {
+    for (var j2 = i+1; j2 < n; j2++) {
+      var sc = alignSequences(seqs[i], seqs[j2], mode, gapOpen, gapExtend)[2];
+      pairSc[i][j2] = pairSc[j2][i] = sc;
+    }
+  }
+  // Pick center
+  var totals = seqs.map(function(_,idx){
+    return pairSc[idx].reduce(function(a,b){return a+b;},0);
+  });
+  var center = totals.indexOf(Math.max.apply(null, totals));
+  var cSeq = seqs[center];
+  var cLen = cSeq.length;
+
+  // Align all vs center
+  var pw = [];
+  for (var i = 0; i < n; i++) {
+    if (i === center) continue;
+    var ab = alignSequences(cSeq, seqs[i], mode, gapOpen, gapExtend);
+    pw.push([i, ab[0], ab[1]]);
+  }
+
+  // Merge insertion map
+  var maxIns = new Array(cLen + 1).fill(0);
+  for (var pi = 0; pi < pw.length; pi++) {
+    var ac = pw[pi][1];
+    var cpos = 0, ins = 0;
+    for (var k = 0; k < ac.length; k++) {
+      if (ac[k] === '-') {
+        ins++;
+      } else {
+        if (ins > maxIns[cpos]) maxIns[cpos] = ins;
+        cpos++;
+        ins = 0;
+      }
+    }
+    if (ins > maxIns[cpos]) maxIns[cpos] = ins;
+  }
+
+  // Build center aligned
+  var cAln = [];
+  for (var k = 0; k < cLen; k++) {
+    for (var g = 0; g < maxIns[k]; g++) cAln.push('-');
+    cAln.push(cSeq[k]);
+  }
+  for (var g = 0; g < maxIns[cLen]; g++) cAln.push('-');
+
+  // Rebuild other sequences
+  function rebuild(ac, ao) {
+    var out = [];
+    var ai = 0;
+    for (var cp = 0; cp <= cLen; cp++) {
+      var local = 0;
+      while (ai < ac.length && ac[ai] === '-') { local++; ai++; }
+      var chars = [];
+      for (var jj = 0; jj < local; jj++) {
+        var idx2 = ai - local + jj;
+        chars.push(idx2 < ao.length ? ao[idx2] : '-');
+      }
+      for (var g = 0; g < maxIns[cp] - local; g++) out.push('-');
+      for (var jj = 0; jj < chars.length; jj++) out.push(chars[jj]);
+      if (cp < cLen) {
+        out.push(ai < ao.length ? ao[ai] : '-');
+        ai++;
+      }
+    }
+    return out.join('');
+  }
+
+  var result = new Array(n).fill(null);
+  result[center] = [names[center], cAln.join('')];
+  for (var pi = 0; pi < pw.length; pi++) {
+    var oi = pw[pi][0];
+    result[oi] = [names[oi], rebuild(pw[pi][1], pw[pi][2])];
+  }
+
+  var avg = pairSc[center].reduce(function(a,b){return a+b;},0) / (n - 1);
+  return [result, avg];
+}
+
+function computePairwiseStats(aligned) {
+  var stats = {};
+  for (var i = 0; i < aligned.length; i++) {
+    for (var j = i+1; j < aligned.length; j++) {
+      var ni = aligned[i][0], si = aligned[i][1];
+      var nj = aligned[j][0], sj = aligned[j][1];
+      var L = Math.min(si.length, sj.length), m = 0;
+      for (var k = 0; k < L; k++) if (si[k] === sj[k] && si[k] !== '-') m++;
+      stats[ni + '\x00' + nj] = [m, L, L ? 100*m/L : 0];
+    }
+  }
+  return stats;
+}
+
+function msaConsensus(aligned) {
+  if (!aligned.length) return '';
+  var seqs = aligned.map(function(x){return x[1];});
+  var L = Math.max.apply(null, seqs.map(function(s){return s.length;}));
+  var cons = [];
+  for (var i = 0; i < L; i++) {
+    var col = seqs.map(function(s){return i < s.length ? s[i] : '-';});
+    var nonGap = col.filter(function(c){return c !== '-';});
+    if (!nonGap.length) { cons.push(' '); continue; }
+    var uniq = {};
+    nonGap.forEach(function(c){uniq[c]=1;});
+    var uKeys = Object.keys(uniq);
+    if (uKeys.length === 1 && nonGap.length === col.length) { cons.push('*'); continue; }
+    if (uKeys.length === 1) { cons.push(':'); continue; }
+    var allPos = true, somePos = false;
+    for (var a = 0; a < nonGap.length && allPos; a++) {
+      for (var b = a+1; b < nonGap.length; b++) {
+        var sc = blosumScore(nonGap[a], nonGap[b]);
+        if (sc > 0) somePos = true;
+        else { allPos = false; break; }
+      }
+    }
+    cons.push(allPos ? ':' : (somePos ? '.' : ' '));
+  }
+  return cons.join('');
+}
+
+// -----------------------------------------------------------------------------
+// CDR annotation
+// -----------------------------------------------------------------------------
+var CDR_PARAMS = {
+  H: {
+    kabat:   {c1r1:9,  w1r1:-1, w1r2:14, r2len:16, c2r3:3},
+    chothia: {c1r1:4,  w1r1:-6, w1r2:16, r2len:5,  c2r3:3},
+    imgt:    {c1r1:4,  w1r1:-1, w1r2:20, r2len:10, c2r3:4},
+  },
+  K: {
+    kabat:   {c1r1:1,  w1r1:-1, w1r2:15, r2len:6,  c2r3:1},
+    chothia: {c1r1:1,  w1r1:-1, w1r2:15, r2len:7,  c2r3:1},
+    imgt:    {c1r1:1,  w1r1:-1, w1r2:15, r2len:7,  c2r3:1},
+  },
+  L: {
+    kabat:   {c1r1:1,  w1r1:-1, w1r2:15, r2len:6,  c2r3:1},
+    chothia: {c1r1:1,  w1r1:-1, w1r2:15, r2len:7,  c2r3:1},
+    imgt:    {c1r1:1,  w1r1:-1, w1r2:15, r2len:7,  c2r3:1},
+  },
+};
+
+function detectCdrs(seq, chainType, scheme) {
+  seq = seq.toUpperCase();
+  var p = (CDR_PARAMS[chainType] || CDR_PARAMS.H)[scheme] || CDR_PARAMS.H.kabat;
+  var n = seq.length;
+  var c1 = -1;
+  for (var i = 14; i < Math.min(34, n); i++) { if (seq[i] === 'C') { c1 = i; break; } }
+  if (c1 < 0) return null;
+  var w1 = -1;
+  for (var i = c1+4; i < Math.min(c1+22, n); i++) { if (seq[i] === 'W') { w1 = i; break; } }
+  if (w1 < 0) return null;
+  var cdr1S = c1 + p.c1r1, cdr1E = w1 + p.w1r1;
+  var cdr2S = w1 + p.w1r2, cdr2E = cdr2S + p.r2len - 1;
+  var c2lo = cdr2E + (chainType === 'H' ? 28 : 22);
+  var c2hi = cdr2E + (chainType === 'H' ? 50 : 46);
+  var c2 = -1;
+  for (var i = c2lo; i < Math.min(c2hi, n); i++) { if (seq[i] === 'C') { c2 = i; break; } }
+  if (c2 < 0) return null;
+  var cdr3S = c2 + p.c2r3;
+  var jPat = chainType === 'H' ? /WG[A-Z]G/ : /FG[A-Z]G/;
+  var searchStr = seq.slice(cdr3S, cdr3S + 32);
+  var jm = searchStr.match(jPat);
+  var cdr3E = jm
+    ? cdr3S + searchStr.indexOf(jm[0]) - 1
+    : Math.min(cdr3S + (chainType === 'H' ? 11 : 8), n - 1);
+  cdr3E = Math.max(cdr3E, cdr3S);
+  var ss = function(s,e) { return (s>=0&&s<=e&&e<n) ? seq.slice(s,e+1) : ''; };
+  return {
+    cdr1: [cdr1S, Math.min(cdr1E, n-1)],
+    cdr2: [cdr2S, Math.min(cdr2E, n-1)],
+    cdr3: [cdr3S, Math.min(cdr3E, n-1)],
+    cdr1_seq: ss(cdr1S, cdr1E),
+    cdr2_seq: ss(cdr2S, cdr2E),
+    cdr3_seq: ss(cdr3S, cdr3E),
+    scheme: scheme.toUpperCase(),
+  };
+}
+
+function getResidueRegion(seqPos, cdrAnn) {
+  if (!cdrAnn) return 'match';
+  var regs = ['cdr1','cdr2','cdr3'];
+  for (var i = 0; i < regs.length; i++) {
+    var reg = regs[i];
+    var s = cdrAnn[reg][0], e = cdrAnn[reg][1];
+    if (s !== -1 && seqPos >= s && seqPos <= e) return reg;
+  }
+  return 'fr';
+}
+
+// -----------------------------------------------------------------------------
+// FASTA
+// -----------------------------------------------------------------------------
+function parseFasta(text) {
+  var records = [], name = null, seqLines = [];
+  var lines = text.split('\n');
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i].trim();
+    if (line.charAt(0) === '>') {
+      if (name !== null) records.push([name, seqLines.join('').toUpperCase()]);
+      name = line.slice(1).trim();
+      seqLines = [];
+    } else if (line) {
+      seqLines.push(line.replace(/\s/g,''));
+    }
+  }
+  if (name !== null) records.push([name, seqLines.join('').toUpperCase()]);
+  return records;
+}
+
+function cleanSeq(text) {
+  return text.replace(/[\s\d]/g,'').toUpperCase();
+}
+
+// -----------------------------------------------------------------------------
+// UI -- Panel management
+// -----------------------------------------------------------------------------
+var patPanels = [];
+var patPanelCtr = 0;
+var patLastText = '';
+
+function patAddPanel(name, seq) {
+  patPanelCtr++;
+  var id = 'pat-panel-' + patPanelCtr;
+  var idx = patPanels.length + 1;
+  var div = document.createElement('div');
+  div.className = 'pat-seq-panel';
+  div.id = id;
+  div.innerHTML =
+    '<div class="pat-seq-panel-hdr">' +
+      '<span class="pat-seq-num">SEQ ' + idx + '</span>' +
+      '<button class="pat-btn-remove" data-id="' + id + '" onclick="patRemovePanel(\'' + id + '\')">Remove</button>' +
+    '</div>' +
+    '<div class="pat-name-row">' +
+      '<label>Name:</label>' +
+      '<input type="text" class="pat-name-input" placeholder="e.g. Antibody_VH" value="' + patEsc(name||'') + '">' +
+    '</div>' +
+    '<textarea class="pat-seq-text" placeholder="Paste amino acid sequence or FASTA..." spellcheck="false">' + patEsc(seq||'') + '</textarea>' +
+    '<div class="pat-seq-mini-btns">' +
+      '<button class="pat-btn-sm" onclick="patLoadFastaToPanel(\'' + id + '\')">Load FASTA</button>' +
+      '<button class="pat-btn-sm" onclick="patClearPanel(\'' + id + '\')">Clear</button>' +
+    '</div>';
+  document.getElementById('pat-seq-panels').appendChild(div);
+  patPanels.push(id);
+  patUpdateRemoveButtons();
+}
+
+function patEsc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function patRemovePanel(id) {
+  if (patPanels.length <= 2) { patShowError('At least 2 sequences are required.'); return; }
+  var el = document.getElementById(id);
+  if (el) el.remove();
+  patPanels = patPanels.filter(function(p){return p !== id;});
+  patRenumber();
+  patUpdateRemoveButtons();
+}
+
+function patRenumber() {
+  patPanels.forEach(function(id, idx) {
+    var el = document.getElementById(id);
+    if (el) el.querySelector('.pat-seq-num').textContent = 'SEQ ' + (idx+1);
+  });
+}
+
+function patUpdateRemoveButtons() {
+  var show = patPanels.length > 2;
+  patPanels.forEach(function(id) {
+    var btn = document.querySelector('#' + id + ' .pat-btn-remove');
+    if (btn) btn.disabled = !show;
+  });
+}
+
+function patClearPanel(id) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.querySelector('.pat-name-input').value = '';
+  el.querySelector('.pat-seq-text').value   = '';
+}
+
+function patGetPanelData(id) {
+  var el = document.getElementById(id);
+  if (!el) return null;
+  var rawName = el.querySelector('.pat-name-input').value.trim();
+  var idx = patPanels.indexOf(id) + 1;
+  var name = rawName || ('Seq' + idx);
+  var raw = el.querySelector('.pat-seq-text').value.trim();
+  if (!raw) return null;
+  var seq;
+  if (raw.charAt(0) === '>') {
+    var recs = parseFasta(raw);
+    if (recs.length) { if (!rawName) name = recs[0][0]; seq = recs[0][1]; }
+    else seq = '';
+  } else {
+    seq = cleanSeq(raw);
+  }
+  return seq ? [name, seq] : null;
+}
+
+function patLoadFastaToPanel(id) {
+  var fi = document.getElementById('pat-file-input');
+  fi.onchange = function() {
+    var file = fi.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      var content = e.target.result;
+      var records = parseFasta(content);
+      var el = document.getElementById(id);
+      if (!el) return;
+      if (records.length) {
+        el.querySelector('.pat-name-input').value = records[0][0];
+        el.querySelector('.pat-seq-text').value   = records[0][1];
+      } else {
+        el.querySelector('.pat-seq-text').value   = cleanSeq(content);
+        el.querySelector('.pat-name-input').value = file.name.replace(/\.[^.]+$/, '');
+      }
+    };
+    reader.readAsText(file);
+    fi.value = '';
+  };
+  fi.click();
+}
+
+function patLoadMultiFasta() {
+  var fi = document.getElementById('pat-file-input');
+  fi.onchange = function() {
+    var file = fi.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      var records = parseFasta(e.target.result);
+      if (!records.length) { patShowError('No FASTA sequences found in file.'); return; }
+      var wrap = document.getElementById('pat-seq-panels');
+      wrap.innerHTML = '';
+      patPanels = [];
+      records.forEach(function(r) { patAddPanel(r[0], r[1]); });
+      while (patPanels.length < 2) patAddPanel();
+      patUpdateRemoveButtons();
+    };
+    reader.readAsText(file);
+    fi.value = '';
+  };
+  fi.click();
+}
+
+// -----------------------------------------------------------------------------
+// Results rendering
+// -----------------------------------------------------------------------------
+function patShowError(msg) {
+  var el = document.getElementById('pat-error');
+  el.textContent = 'Warning: ' + msg;
+  el.style.display = 'block';
+}
+function patHideError() {
+  document.getElementById('pat-error').style.display = 'none';
+}
+
+// Minimal HTML builder
+function Builder() { this._p = []; }
+Builder.prototype.w = function(txt, cls) {
+  var esc = String(txt).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  this._p.push(cls ? '<span class="pat-r-' + cls + '">' + esc + '</span>' : esc);
+};
+Builder.prototype.html = function() { return this._p.join(''); };
+Builder.prototype.text = function() {
+  return this._p.map(function(p) {
+    var d = document.createElement('div');
+    d.innerHTML = p;
+    return d.textContent;
+  }).join('');
+};
+
+function writeBlock(rb, block, other, cdrAnn, seqPos) {
+  var pos = seqPos;
+  for (var i = 0; i < block.length; i++) {
+    var aa = block[i];
+    if (aa === '-') { rb.w(aa, 'gap'); continue; }
+    var tag;
+    if (cdrAnn) {
+      tag = getResidueRegion(pos, cdrAnn);
+    } else {
+      tag = aa === (i < other.length ? other[i] : '-') ? 'match' : 'mismatch';
+    }
+    rb.w(aa, tag);
+    pos++;
+  }
+}
+
+function cdrIdPct(aln1, aln2, s, e) {
+  var m = 0, tot = 0, sp = 0;
+  for (var k = 0; k < aln1.length; k++) {
+    if (aln1[k] !== '-') {
+      if (sp >= s && sp <= e) { tot++; if (aln1[k] === aln2[k]) m++; }
+      sp++;
+    }
+  }
+  return [m, tot];
+}
+
+function padL(s, n) { s = String(s); while (s.length < n) s = ' ' + s; return s; }
+function padR(s, n) { s = String(s); while (s.length < n) s += ' '; return s; }
+
+function buildRuler(start, end, width) {
+  var sStr = String(start), mStr = String(Math.round((start+end)/2)), eStr = String(end);
+  var rem = width - sStr.length - mStr.length - eStr.length;
+  var left = Math.floor(rem / 2), right = rem - left;
+  if (left < 0) left = 0;
+  if (right < 0) right = 0;
+  return (sStr + ' '.repeat(left) + mStr + ' '.repeat(right) + eStr).slice(0, width);
+}
+
+// -----------------------------------------------------------------------------
+// Display pairwise
+// -----------------------------------------------------------------------------
+function displayPairwise(seqsNamed, aligned, cdrAnns, score) {
+  var name1 = seqsNamed[0][0], seq1 = seqsNamed[0][1];
+  var name2 = seqsNamed[1][0], seq2 = seqsNamed[1][1];
+  var aln1 = aligned[0][1], aln2 = aligned[1][1];
+  var L = aln1.length;
+  var matches = 0, positives = 0, gaps = 0;
+  for (var k = 0; k < L; k++) {
+    var a = aln1[k], b = aln2[k];
+    if (a === b && a !== '-') matches++;
+    if (a !== '-' && b !== '-' && blosumScore(a, b) > 0) positives++;
+    if (a === '-' || b === '-') gaps++;
+  }
+  var pctId  = L ? (100*matches/L).toFixed(1)   : '0.0';
+  var pctPos = L ? (100*positives/L).toFixed(1) : '0.0';
+  var pctGap = L ? (100*gaps/L).toFixed(1)       : '0.0';
+
+  var cdr1 = cdrAnns[name1] || null;
+  var cdr2 = cdrAnns[name2] || null;
+  var rb = new Builder();
+  var W = 72;
+
+  rb.w('='.repeat(W) + '\n', 'sep');
+  rb.w('  PAIRWISE ALIGNMENT\n', 'header');
+  rb.w('='.repeat(W) + '\n', 'sep');
+  rb.w('\n  Query:    ' + name1 + '  (' + seq1.length + ' aa)\n', 'stats');
+  rb.w('  Subject:  ' + name2 + '  (' + seq2.length + ' aa)\n', 'stats');
+  rb.w('\n  Score:      ' + score.toFixed(1) + '\n', 'stats');
+  rb.w('  Identity:   ' + matches + '/' + L + '  (' + pctId + '%)\n', 'stats');
+  rb.w('  Positives:  ' + positives + '/' + L + '  (' + pctPos + '%)\n', 'stats');
+  rb.w('  Gaps:       ' + gaps + '/' + L + '  (' + pctGap + '%)\n', 'stats');
+
+  if (cdr1 || cdr2) {
+    var scheme = (cdr1 || cdr2).scheme;
+    rb.w('\n  CDR sequences (' + scheme + '):\n', 'stats');
+    var pairs = [['  Query  ', cdr1], ['  Subject', cdr2]];
+    for (var pi = 0; pi < pairs.length; pi++) {
+      var lbl = pairs[pi][0], ann = pairs[pi][1];
+      if (ann) {
+        rb.w('    ' + lbl + ': ', 'stats');
+        rb.w('CDR1=' + ann.cdr1_seq + ' ', 'cdr1');
+        rb.w('CDR2=' + ann.cdr2_seq + ' ', 'cdr2');
+        rb.w('CDR3=' + ann.cdr3_seq + '\n', 'cdr3');
+      }
+    }
+    if (cdr1 && cdr2) {
+      rb.w('\n  Per-CDR identity:\n', 'stats');
+      var regs = [['cdr1','cdr1'],['cdr2','cdr2'],['cdr3','cdr3']];
+      for (var ri = 0; ri < regs.length; ri++) {
+        var reg = regs[ri][0], col2 = regs[ri][1];
+        var cs = cdr1[reg][0], ce = cdr1[reg][1];
+        if (cs < 0) continue;
+        var mc2 = cdrIdPct(aln1, aln2, cs, ce);
+        var pct2 = mc2[1] ? (100*mc2[0]/mc2[1]).toFixed(1) : '0.0';
+        rb.w('    ' + reg.toUpperCase() + ': ', 'stats');
+        rb.w(mc2[0] + '/' + mc2[1] + ' (' + pct2 + '%)\n', col2);
+      }
+    }
+  }
+
+  rb.w('\n' + '-'.repeat(W) + '\n', 'sep');
+  var BLOCK = 56, LW = 10;
+  var qPos = 0, sPos = 0;
+  var cons = [];
+  for (var k = 0; k < L; k++) {
+    var a = aln1[k], b = aln2[k];
+    if (a === b && a !== '-') cons.push('|');
+    else if (a !== '-' && b !== '-' && blosumScore(a,b) > 0) cons.push('+');
+    else cons.push(' ');
+  }
+  var consStr = cons.join('');
+
+  for (var i = 0; i < L; i += BLOCK) {
+    var b1 = aln1.slice(i, i+BLOCK), b2 = aln2.slice(i, i+BLOCK), bc = consStr.slice(i, i+BLOCK);
+    var qEnd = qPos + b1.split('').filter(function(c){return c!=='-';}).length;
+    var sEnd = sPos + b2.split('').filter(function(c){return c!=='-';}).length;
+    rb.w('  ' + padL('Query', LW) + ' ' + padL(qPos+1, 5) + ' ', 'pos');
+    writeBlock(rb, b1, b2, cdr1, qPos);
+    rb.w(' ' + padR(qEnd, 5) + '\n', 'pos');
+    rb.w('  ' + ' '.repeat(LW) + ' ' + ' '.repeat(5) + ' ' + bc + '\n', 'sep');
+    rb.w('  ' + padL('Subject', LW) + ' ' + padL(sPos+1, 5) + ' ', 'pos');
+    writeBlock(rb, b2, b1, cdr2, sPos);
+    rb.w(' ' + padR(sEnd, 5) + '\n\n', 'pos');
+    qPos = qEnd; sPos = sEnd;
+  }
+
+  renderResults(rb, [
+    {val: score.toFixed(1),   lbl: 'Alignment Score'},
+    {val: pctId + '%',        lbl: 'Identity'},
+    {val: pctPos + '%',       lbl: 'Positives'},
+    {val: pctGap + '%',       lbl: 'Gaps'},
+  ], cdr1 || cdr2, 2);
+}
+
+// -----------------------------------------------------------------------------
+// Display MSA
+// -----------------------------------------------------------------------------
+function displayMSA(seqsNamed, aligned, cdrAnns, score) {
+  var n = aligned.length;
+  var L = Math.max.apply(null, aligned.map(function(x){return x[1].length;}));
+  var names = aligned.map(function(x){return x[0];});
+  var pwStats = computePairwiseStats(aligned);
+  var allPcts = Object.keys(pwStats).map(function(k){return pwStats[k][2];});
+  var avgId = allPcts.length ? allPcts.reduce(function(a,b){return a+b;},0)/allPcts.length : 0;
+  var consensus = msaConsensus(aligned);
+
+  var rb = new Builder();
+  var W = 72;
+  var LW = Math.max.apply(null, names.map(function(nm){return nm.length;}));
+  LW = Math.max(LW, 8);
+
+  rb.w('='.repeat(W) + '\n', 'sep');
+  rb.w('  MULTIPLE SEQUENCE ALIGNMENT  (' + n + ' sequences)\n', 'header');
+  rb.w('='.repeat(W) + '\n', 'sep');
+  rb.w('\n  Sequences:\n', 'stats');
+  aligned.forEach(function(row, idx) {
+    var orig = seqsNamed.filter(function(x){return x[0]===row[0];})[0];
+    rb.w('    ' + padL(idx+1, 2) + '. ' + row[0] + '  (' + (orig ? orig[1].length : '?') + ' aa)\n', 'stats');
+  });
+  rb.w('\n  Algorithm:    Center-star progressive (BLOSUM62)\n', 'stats');
+  rb.w('  Aligned length: ' + L + ' aa\n', 'stats');
+  rb.w('  Avg pairwise identity: ' + avgId.toFixed(1) + '%\n', 'stats');
+
+  rb.w('\n  Pairwise identity matrix:\n', 'stats');
+  rb.w('  ' + padR('', LW+2), 'stats');
+  names.forEach(function(nm){ rb.w('  ' + padL(nm.slice(0,7), 7), 'stats'); });
+  rb.w('\n', 'stats');
+  names.forEach(function(ni) {
+    rb.w('  ' + padR(ni, LW+2), 'stats');
+    names.forEach(function(nj) {
+      if (ni === nj) { rb.w('  ' + padL('--', 7), 'sep'); return; }
+      var key = (ni+'\x00'+nj) in pwStats ? ni+'\x00'+nj : nj+'\x00'+ni;
+      var pct = pwStats[key][2];
+      var col3 = pct >= 90 ? 'cdr3' : (pct >= 70 ? 'fr' : 'mismatch');
+      rb.w('  ' + padL(pct.toFixed(1)+'%', 7), col3);
+    });
+    rb.w('\n', 'stats');
+  });
+
+  var anyCdr = names.some(function(nm){return !!cdrAnns[nm];});
+  if (anyCdr) {
+    var scheme = Object.values ? Object.values(cdrAnns)[0].scheme : cdrAnns[Object.keys(cdrAnns)[0]].scheme;
+    rb.w('\n  CDR sequences (' + scheme + '):\n', 'stats');
+    aligned.forEach(function(row) {
+      var ann = cdrAnns[row[0]];
+      if (ann) {
+        rb.w('    ' + row[0] + ': ', 'stats');
+        rb.w('CDR1=' + ann.cdr1_seq + ' ', 'cdr1');
+        rb.w('CDR2=' + ann.cdr2_seq + ' ', 'cdr2');
+        rb.w('CDR3=' + ann.cdr3_seq + '\n', 'cdr3');
+      }
+    });
+  }
+
+  rb.w('\n' + '-'.repeat(W) + '\n', 'sep');
+  var BLOCK = 50;
+  var seqPos = {};
+  names.forEach(function(nm){seqPos[nm]=0;});
+
+  for (var i = 0; i < L; i += BLOCK) {
+    var ruler = buildRuler(i+1, Math.min(i+BLOCK, L), BLOCK);
+    rb.w('  ' + padR('', LW+2) + '       ' + ruler + '\n', 'sep');
+    aligned.forEach(function(row) {
+      var nm = row[0], alnSeq = row[1];
+      var blk = alnSeq.slice(i, i+BLOCK);
+      var sPos = seqPos[nm];
+      var endPos = sPos + blk.split('').filter(function(c){return c!=='-';}).length;
+      rb.w('  ' + padL(nm, LW) + ' ' + padL(sPos+1, 5) + ' ', 'pos');
+      writeBlock(rb, blk, blk, cdrAnns[nm]||null, sPos);
+      rb.w(' ' + padR(endPos, 5) + '\n', 'pos');
+      seqPos[nm] = endPos;
+    });
+    var consBlk = consensus.slice(i, i+BLOCK);
+    rb.w('  ' + padL('Consensus', LW) + ' ' + ' '.repeat(5) + ' ' + consBlk + '\n\n', 'cons');
+  }
+
+  renderResults(rb, [
+    {val: n,                  lbl: 'Sequences'},
+    {val: L + ' aa',          lbl: 'Aligned Length'},
+    {val: avgId.toFixed(1)+'%', lbl: 'Avg Identity'},
+    {val: anyCdr ? 'Yes' : '--', lbl: 'CDR Annotated'},
+  ], anyCdr, n);
+}
+
+// -----------------------------------------------------------------------------
+// Render results into #pat-results
+// -----------------------------------------------------------------------------
+function renderResults(rb, stats, hasCdr, seqCount) {
+  patLastText = rb.text();
+  var statsHtml = stats.map(function(s) {
+    return '<div class="pat-stat"><div class="pat-stat-val">' + patEsc(String(s.val)) +
+           '</div><div class="pat-stat-lbl">' + patEsc(s.lbl) + '</div></div>';
+  }).join('');
+
+  var legend = '';
+  if (hasCdr) {
+    legend += '<span class="pat-chip pat-chip-cdr1">CDR1</span>' +
+              '<span class="pat-chip pat-chip-cdr2">CDR2</span>' +
+              '<span class="pat-chip pat-chip-cdr3">CDR3</span>' +
+              '<span class="pat-chip pat-chip-fr">Framework</span>';
+  }
+  legend += '<span class="pat-chip pat-chip-match">Match</span>' +
+            '<span class="pat-chip pat-chip-mismatch">Mismatch</span>' +
+            '<span class="pat-chip pat-chip-gap">Gap / -</span>';
+
+  document.getElementById('pat-results').innerHTML =
+    '<div class="pat-card">' +
+      '<div class="pat-results-hdr">' +
+        '<div>' +
+          '<h2>Alignment Results</h2>' +
+          '<p>' + seqCount + (seqCount === 2 ? '-sequence pairwise alignment' : '-sequence MSA') + ' | BLOSUM62</p>' +
+        '</div>' +
+        '<button class="pat-btn-export" onclick="patExport()">Export .txt</button>' +
+      '</div>' +
+      '<div class="pat-stats-grid">' + statsHtml + '</div>' +
+      '<div class="pat-legend">' + legend + '</div>' +
+      '<div class="pat-terminal" style="margin-top:14px"><pre id="pat-pre">' + rb.html() + '</pre></div>' +
+    '</div>';
+}
+
+// -----------------------------------------------------------------------------
+// Main run
+// -----------------------------------------------------------------------------
+window.patRun = function() {
+  patHideError();
+  var seqsNamed = patPanels.map(patGetPanelData).filter(Boolean);
+  if (seqsNamed.length < 2) { patShowError('Please enter at least 2 sequences.'); return; }
+
+  var mode      = (document.querySelector('input[name="pat-mode"]:checked') || {}).value || 'local';
+  var gapOpen   = parseFloat(document.getElementById('pat-gapopen').value)  || -11;
+  var gapExtend = parseFloat(document.getElementById('pat-gapext').value)   || -1;
+  var ct        = document.getElementById('pat-chain').value;
+  var scheme    = document.getElementById('pat-scheme').value;
+  var annotate  = document.getElementById('pat-annotate').checked;
+
+  document.getElementById('pat-results').innerHTML =
+    '<div class="pat-card" style="color:#aab6cf;text-align:center;padding:40px">Running alignment...</div>';
+
+  setTimeout(function() {
+    try {
+      var aligned, score;
+      if (seqsNamed.length === 2) {
+        var r = alignSequences(seqsNamed[0][1], seqsNamed[1][1], mode, gapOpen, gapExtend);
+        aligned = [[seqsNamed[0][0], r[0]], [seqsNamed[1][0], r[1]]];
+        score = r[2];
+      } else {
+        var mr = multipleSequenceAlignment(seqsNamed, mode, gapOpen, gapExtend);
+        aligned = mr[0]; score = mr[1];
+      }
+
+      var cdrAnns = {};
+      if (annotate && ct !== 'generic') {
+        seqsNamed.forEach(function(pair) {
+          var ann = detectCdrs(pair[1], ct, scheme);
+          if (ann) cdrAnns[pair[0]] = ann;
+        });
+      }
+
+      if (seqsNamed.length === 2) {
+        displayPairwise(seqsNamed, aligned, cdrAnns, score);
+      } else {
+        displayMSA(seqsNamed, aligned, cdrAnns, score);
+      }
+    } catch(err) {
+      patShowError('Alignment error: ' + err.message);
+      document.getElementById('pat-results').innerHTML = '';
+    }
+  }, 20);
+};
+
+window.patExport = function() {
+  if (!patLastText.trim()) return;
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([patLastText], {type:'text/plain'}));
+  a.download = 'alignment_' + new Date().toISOString().slice(0,10) + '.txt';
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+// Expose functions called from inline onclick handlers to global scope
+window.patAddPanel          = patAddPanel;
+window.patRemovePanel       = patRemovePanel;
+window.patClearPanel        = patClearPanel;
+window.patLoadFastaToPanel  = patLoadFastaToPanel;
+window.patLoadMultiFasta    = patLoadMultiFasta;
+
+// -----------------------------------------------------------------------------
+// Init
+// -----------------------------------------------------------------------------
+patAddPanel();
+patAddPanel();
+
+}());
+</script>

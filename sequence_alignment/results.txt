@@ -1,0 +1,59 @@
+==============================================================================
+  PAIRWISE ALIGNMENT
+==============================================================================
+
+  Query:   Anti-HER2 Heavy chain  (450 aa)
+  Subject: Heavy Chain Sequence  (447 aa)
+
+  Score:      1937.0
+  Identity:   364/450  (80.9%)
+  Positives:  399/450  (88.7%)
+  Gaps:       3/450  (0.7%)
+
+  CDR sequences (KABAT):
+      Query  : CDR1=DTYIH CDR2=RIYPTNGYTRYADSVK CDR3=WGGDGFYAMDY
+      Subject: CDR1=NYYMY CDR2=GINPSNGGTNFNEKFK CDR3=RDYRFDMGFDY
+
+  Per-CDR identity:
+    CDR1: 1/5 (20.0%)
+    CDR2: 6/16 (37.5%)
+    CDR3: 2/11 (18.2%)
+
+  Legend: CDR1 CDR2 CDR3 Framework 
+  Residues: Match Mismatch Gap
+
+==============================================================================
+
+       Query     1 EVQLVESGGGLVQPGGSLRLSCAASGFNIKDTYIHWVRQAPGKGLEWVARIYPTNGYTRY 60   
+                   +||||+||  + +|| |+++|| |||+   + |++|||||||+||||+  | |+|| | +
+     Subject     1 QVQLVQSGVEVKKPGASVKVSCKASGYTFTNYYMYWVRQAPGQGLEWMGGINPSNGGTNF 60   
+
+       Query    61 ADSVKGRFTISADTSKNTAYLQMNSLRAEDTAVYYCSRWGGDGFYAMDYWGQGTLVTVSS 120  
+                    +  | | |++ |+|  |||+++ ||+ +|||||||+|         ||||||| |||||
+     Subject    61 NEKFKNRVTLTTDSSTTTAYMELKSLQFDDTAVYYCARRDYRFDMGFDYWGQGTTVTVSS 120  
+
+       Query   121 ASTKGPSVFPLAPSSKSTSGGTAALGCLVKDYFPEPVTVSWNSGALTSGVHTFPAVLQSS 180  
+                   ||||||||||||| |+|||  |||||||||||||||||||||||||||||||||||||||
+     Subject   121 ASTKGPSVFPLAPCSRSTSESTAALGCLVKDYFPEPVTVSWNSGALTSGVHTFPAVLQSS 180  
+
+       Query   181 GLYSLSSVVTVPSSSLGTQTYICNVNHKPSNTKVDKKVEPKSCDKTHTCPPCPAPELLGG 240  
+                   ||||||||||||||||||+|| |||+||||||||||+|| |       |||||||| |||
+     Subject   181 GLYSLSSVVTVPSSSLGTKTYTCNVDHKPSNTKVDKRVESK---YGPPCPPCPAPEFLGG 237  
+
+       Query   241 PSVFLFPPKPKDTLMISRTPEVTCVVVDVSHEDPEVKFNWYVDGVEVHNAKTKPREEQYN 300  
+                   |||||||||||||||||||||||||||||| |||||+|||||||||||||||||||||+|
+     Subject   238 PSVFLFPPKPKDTLMISRTPEVTCVVVDVSQEDPEVQFNWYVDGVEVHNAKTKPREEQFN 297  
+
+       Query   301 STYRVVSVLTVLHQDWLNGKEYKCKVSNKALPAPIEKTISKAKGQPREPQVYTLPPSREE 360  
+                   ||||||||||||||||||||||||||||| ||+ |||||||||||||||||||||||+||
+     Subject   298 STYRVVSVLTVLHQDWLNGKEYKCKVSNKGLPSSIEKTISKAKGQPREPQVYTLPPSQEE 357  
+
+       Query   361 MTKNQVSLTCLVKGFYPSDIAVEWESNGQPENNYKTTPPVLDSDGSFFLYSKLTVDKSRW 420  
+                   |||||||||||||||||||||||||||||||||||||||||||||||||||+||||||||
+     Subject   358 MTKNQVSLTCLVKGFYPSDIAVEWESNGQPENNYKTTPPVLDSDGSFFLYSRLTVDKSRW 417  
+
+       Query   421 QQGNVFSCSVMHEALHNHYTQKSLSLSPGK 450  
+                   |+||||||||||||||||||||||||| ||
+     Subject   418 QEGNVFSCSVMHEALHNHYTQKSLSLSLGK 447  
+
+

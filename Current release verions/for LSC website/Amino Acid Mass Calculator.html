@@ -1,0 +1,732 @@
+
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Amino Acid Mass Calculator</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #131a2b;
+      --panel-2: #1a2338;
+      --text: #e8edf7;
+      --muted: #aab6cf;
+      --accent: #7cc4ff;
+      --accent-2: #8ef0c2;
+      --danger: #ff8e8e;
+      --border: #2b3550;
+      --shadow: 0 10px 30px rgba(0,0,0,0.25);
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      --sans: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      color: #e8edf7;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 2rem;
+    }
+
+    .subtitle {
+      color: #aab6cf;
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
+
+    .privacy {
+      background: rgba(142, 240, 194, 0.08);
+      color: #000000
+      border: 1px solid rgba(142, 240, 194, 0.3);
+      border-radius: 14px;
+      padding: 12px 14px;
+      margin-bottom: 20px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.3fr 0.9fr;
+      gap: 20px;
+    }
+
+    .card {
+      background: rgba(19, 26, 43, 0.95);
+      border: 1px solid #2b3550;
+      border-radius: 18px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+      padding: 18px;
+    }
+
+    .card h2 {
+      margin-top: 0;
+      font-size: 1.1rem;
+    }
+
+    .row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    label {
+      font-size: 0.95rem;
+      color: #aab6cf;
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    textarea, input[type="number"], input[type="text"], select, .readonly {
+      width: 100%;
+      background: #1a2338;
+      color: #e8edf7;
+      border: 1px solid #2b3550;
+      border-radius: 12px;
+      padding: 12px 14px;
+      font: inherit;
+    }
+
+    textarea {
+      min-height: 512px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      line-height: 1.45;
+      resize: vertical;
+    }
+
+    .readonly {
+      min-height: 44px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      display: flex;
+      align-items: center;
+      overflow-wrap: anywhere;
+      white-space: normal;
+      word-break: break-word;
+    }
+
+    button, .file-label {
+      appearance: none;
+      border: 1px solid #2b3550;
+      background: linear-gradient(180deg, #22304d, #1b2740);
+      color: #e8edf7;
+      padding: 10px 14px;
+      border-radius: 12px;
+      font: inherit;
+      cursor: pointer;
+      transition: transform 0.05s ease, border-color 0.15s ease, opacity 0.15s ease;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    button:hover, .file-label:hover { border-color: #7cc4ff; }
+    button:active, .file-label:active { transform: translateY(1px); }
+    button.secondary { background: transparent; }
+    button.copy { background: linear-gradient(180deg, #193650, #163048); }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+    input[type="file"] { display: none; }
+
+    .field {
+      flex: 1 1 180px;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+      margin-top: 12px;
+    }
+
+    .metric {
+      border: 1px solid #2b3550;
+      border-radius: 14px;
+      padding: 14px;
+      background: #1a2338;
+      color: #e8edf7;
+    }
+
+    .metric .name {
+      color: #aab6cf;
+      font-size: 0.9rem;
+      margin-bottom: 8px;
+    }
+
+    .metric .value {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 1.15rem;
+      word-break: break-word;
+      color: #e8edf7;
+    }
+
+    .small {
+      color: #aab6cf;
+      font-size: 0.88rem;
+      line-height: 1.5;
+    }
+
+    .error {
+      color: #ff8e8e;
+      margin-top: 10px;
+      white-space: pre-wrap;
+      font-size: 0.95rem;
+    }
+
+    .success {
+      color: #8ef0c2;
+      font-size: 0.9rem;
+      min-height: 1.2em;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .stat {
+      background: #1a2338;
+      color: #e8edf7;
+      border: 1px solid #2b3550;
+      border-radius: 14px;
+      padding: 12px;
+    }
+
+    .stat .label {
+      color: #aab6cf;
+      font-size: 0.85rem;
+      margin-bottom: 6px;
+    }
+
+    .stat .number {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 1rem;
+      color: #e8edf7;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: rgba(255,255,255,0.05);
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+      textarea { min-height: 220px; }
+    }
+  </style>
+</head>
+<body>
+<!-- 
+  <div class="container">
+    <h1>Protein Fragment Molecular Weight Calculator</h1>
+    <div class="subtitle">
+      Paste a protein/peptide sequence or import a FASTA file. Select a subsequence either by highlighting directly in the sequence box or by entering start/end positions. All calculations happen entirely in your browser on your local machine.
+    </div>
+ -->
+
+    <div class="privacy">
+      <strong>Local processing only.</strong> This page uses plain JavaScript running in your browser. No sequence data is uploaded or sent to any third-party service.
+    </div>
+
+    <div class="grid">
+      <section class="card">
+        <h2>Load sequence</h2>
+        <div class="row">
+          <label class="file-label" for="fastaInput">Import FASTA file</label>
+          <input id="fastaInput" type="file" accept=".fasta,.fa,.faa,.txt" />
+          <button id="loadExampleBtn" type="button" class="secondary">Load example</button>
+          <button id="clearBtn" type="button" class="secondary">Clear</button>
+        </div>
+
+        <label for="sequenceInput">Sequence</label>
+        <textarea id="sequenceInput" spellcheck="false" placeholder=">example_sequence
+MKWVTFISLLFLFSSAYSRGVFRRDTHKSEIAHRFKDLGE"></textarea>
+        <div class="small" style="margin-top:8px;">
+          Supported residue codes: <code>ACDEFGHIKLMNPQRSTVWY</code>. Whitespace, line breaks, numbers, and FASTA headers are ignored. Unknown or non-standard letters are flagged.
+        </div>
+        <div id="errorBox" class="error"></div>
+      </section>
+
+      <aside class="card">
+        <h2>Selection and masses</h2>
+        <div class="row">
+          <div class="field">
+            <label for="startInput">Start position</label>
+            <input id="startInput" type="number" min="1" step="1" value="1" />
+          </div>
+          <div class="field">
+            <label for="endInput">End position</label>
+            <input id="endInput" type="number" min="1" step="1" value="1" />
+          </div>
+        </div>
+        <div class="row">
+          <button id="selectAllBtn" type="button">Select full sequence</button>
+          <button id="syncSelectionBtn" type="button" class="secondary">Use highlighted text</button>
+        </div>
+
+        <label for="selectedSequence">Selected sequence</label>
+        <div id="selectedSequence" class="readonly"></div>
+
+        <div class="stats-grid">
+          <div class="stat">
+            <div class="label">Sequence length</div>
+            <div id="lengthStat" class="number">0</div>
+          </div>
+          <div class="stat">
+            <div class="label">Selected length</div>
+            <div id="selectedLengthStat" class="number">0</div>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top: 14px;">
+          <div class="field">
+            <label for="cysteineModSelect">Cysteine modification</label>
+            <select id="cysteineModSelect">
+              <option value="unmodified">Unmodified</option>
+              <option value="carbamidomethylated">Carbamidomethylated</option>
+              <option value="carboxymethylated" selected>Carboxymethylated</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="field">
+            <label for="customMassInput">Custom added mass (Da)</label>
+            <input id="customMassInput" type="number" step="any" placeholder="e.g. 79.96633" />
+          </div>
+          <div class="field">
+            <label for="customResidueInput">Location for added mass</label>
+            <input id="customResidueInput" type="number" min="1" step="1" placeholder="e.g. 1" />
+          </div>
+        </div>
+        <div class="small">The arbitrary mass is added once to the specified 1-based residue number when that residue falls within the selected sequence window.</div>
+
+        <div class="metrics">
+          <div class="metric">
+            <div class="name">Average molecular weight</div>
+            <div id="averageMass" class="value">—</div>
+            <div class="small">Reported as residue sum plus one water molecule.</div>
+          </div>
+          <div class="metric">
+            <div class="name">Monoisotopic mass</div>
+            <div id="monoisotopicMass" class="value">—</div>
+            <div class="small">Reported as residue monoisotopic sum plus one water molecule.</div>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:14px;">
+          <button id="copyAverageBtn" type="button" class="copy">Copy average MW</button>
+          <button id="copyMonoBtn" type="button" class="copy">Copy monoisotopic mass</button>
+          <button id="copyAllBtn" type="button" class="copy">Copy both</button>
+        </div>
+        <div id="copyStatus" class="success"></div>
+      </aside>
+    </div>
+  </div>
+
+  <script>
+    const averageResidueMass = {
+      A: 71.0788,
+      R: 156.1875,
+      N: 114.1038,
+      D: 115.0886,
+      C: 103.1388,
+      E: 129.1155,
+      Q: 128.1307,
+      G: 57.0519,
+      H: 137.1411,
+      I: 113.1594,
+      L: 113.1594,
+      K: 128.1741,
+      M: 131.1926,
+      F: 147.1766,
+      P: 97.1167,
+      S: 87.0782,
+      T: 101.1051,
+      W: 186.2132,
+      Y: 163.1760,
+      V: 99.1326
+    };
+
+    const monoResidueMass = {
+      A: 71.03711,
+      R: 156.10111,
+      N: 114.04293,
+      D: 115.02694,
+      C: 103.00919,
+      E: 129.04259,
+      Q: 128.05858,
+      G: 57.02146,
+      H: 137.05891,
+      I: 113.08406,
+      L: 113.08406,
+      K: 128.09496,
+      M: 131.04049,
+      F: 147.06841,
+      P: 97.05276,
+      S: 87.03203,
+      T: 101.04768,
+      W: 186.07931,
+      Y: 163.06333,
+      V: 99.06841
+    };
+
+    const waterAverage = 18.01528;
+    const waterMono = 18.01056;
+
+    const cysteineModificationDeltas = {
+      unmodified: { avg: 0, mono: 0 },
+      carbamidomethylated: { avg: 57.05162, mono: 57.021464 },
+      carboxymethylated: { avg: 58.03632, mono: 58.00548 }
+    };
+
+    const sequenceInput = document.getElementById('sequenceInput');
+    const fastaInput = document.getElementById('fastaInput');
+    const startInput = document.getElementById('startInput');
+    const endInput = document.getElementById('endInput');
+    const selectedSequence = document.getElementById('selectedSequence');
+    const cysteineModSelect = document.getElementById('cysteineModSelect');
+    const customMassInput = document.getElementById('customMassInput');
+    const customResidueInput = document.getElementById('customResidueInput');
+    const averageMass = document.getElementById('averageMass');
+    const monoisotopicMass = document.getElementById('monoisotopicMass');
+    const errorBox = document.getElementById('errorBox');
+    const copyStatus = document.getElementById('copyStatus');
+    const lengthStat = document.getElementById('lengthStat');
+    const selectedLengthStat = document.getElementById('selectedLengthStat');
+
+    function sanitizeSequence(raw) {
+      const withoutHeaders = raw
+        .split(/\r?\n/)
+        .filter(line => !line.trim().startsWith('>'))
+        .join('');
+
+      const upper = withoutHeaders.toUpperCase();
+      const lettersOnly = (upper.match(/[A-Z]/g) || []).join('');
+      const valid = [];
+      const invalid = [];
+
+      for (const char of lettersOnly) {
+        if (averageResidueMass[char]) {
+          valid.push(char);
+        } else {
+          invalid.push(char);
+        }
+      }
+
+      return {
+        sequence: valid.join(''),
+        invalidResidues: invalid
+      };
+    }
+
+    function getCleanSequence() {
+      return sanitizeSequence(sequenceInput.value).sequence;
+    }
+
+    function formatAverageMass(value) {
+      return Number.isFinite(value) ? `${value.toFixed(2)} Da` : '—';
+    }
+
+    function formatMonoisotopicMass(value) {
+      return Number.isFinite(value) ? `${value.toFixed(5)} Da` : '—';
+    }
+
+    function calculateMasses(seq, options = {}) {
+      if (!seq || seq.length === 0) {
+        return { avg: NaN, mono: NaN };
+      }
+      const cysteineDelta = cysteineModificationDeltas[options.cysteineMod || 'unmodified'] || cysteineModificationDeltas.unmodified;
+      const customMass = Number.isFinite(options.customMass) ? options.customMass : 0;
+      const applyCustomMass = Boolean(options.applyCustomMass);
+
+      let avg = waterAverage;
+      let mono = waterMono;
+      for (const aa of seq) {
+        avg += averageResidueMass[aa];
+        mono += monoResidueMass[aa];
+        if (aa === 'C') {
+          avg += cysteineDelta.avg;
+          mono += cysteineDelta.mono;
+        }
+      }
+      if (applyCustomMass) {
+        avg += customMass;
+        mono += customMass;
+      }
+      return { avg, mono };
+    }
+
+    function getCustomMassSettings(length) {
+      const residueNumber = parseInt(customResidueInput.value, 10);
+      const customMass = parseFloat(customMassInput.value);
+      const hasResidueNumber = Number.isFinite(residueNumber);
+      const hasCustomMass = Number.isFinite(customMass);
+      const cysteineMod = cysteineModSelect.value || 'unmodified';
+
+      return {
+        cysteineMod,
+        customMass,
+        residueNumber,
+        hasCustomMass,
+        hasResidueNumber,
+        isResidueInRange(start, end) {
+          return hasResidueNumber && residueNumber >= start && residueNumber <= end && residueNumber >= 1 && residueNumber <= length;
+        }
+      };
+    }
+
+    function clampSelectionBounds(length) {
+      if (length === 0) {
+        startInput.value = 1;
+        endInput.value = 1;
+        return { start: 1, end: 0 };
+      }
+      let start = parseInt(startInput.value, 10);
+      let end = parseInt(endInput.value, 10);
+      if (!Number.isFinite(start)) start = 1;
+      if (!Number.isFinite(end)) end = length;
+      start = Math.max(1, Math.min(start, length));
+      end = Math.max(1, Math.min(end, length));
+      if (end < start) [start, end] = [end, start];
+      startInput.value = start;
+      endInput.value = end;
+      return { start, end };
+    }
+
+    function showInvalidResidues(invalidResidues) {
+      if (!invalidResidues.length) {
+        errorBox.textContent = '';
+        return;
+      }
+      const counts = invalidResidues.reduce((acc, aa) => {
+        acc[aa] = (acc[aa] || 0) + 1;
+        return acc;
+      }, {});
+      const summary = Object.entries(counts)
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([aa, n]) => `${aa} × ${n}`)
+        .join(', ');
+      errorBox.textContent = `Ignored unsupported residue code(s): ${summary}`;
+    }
+
+    function updateFromBounds() {
+      const { sequence, invalidResidues } = sanitizeSequence(sequenceInput.value);
+      showInvalidResidues(invalidResidues);
+      const length = sequence.length;
+      lengthStat.textContent = length;
+
+      if (length === 0) {
+        selectedSequence.textContent = '—';
+        selectedLengthStat.textContent = '0';
+        averageMass.textContent = '—';
+        monoisotopicMass.textContent = '—';
+        return;
+      }
+
+      const { start, end } = clampSelectionBounds(length);
+      const subseq = sequence.slice(start - 1, end);
+      const customSettings = getCustomMassSettings(length);
+      const masses = calculateMasses(subseq, {
+        cysteineMod: customSettings.cysteineMod,
+        customMass: customSettings.customMass,
+        applyCustomMass: customSettings.hasCustomMass && customSettings.isResidueInRange(start, end)
+      });
+
+      selectedSequence.textContent = subseq ? subseq.match(/.{1,10}/g).join(' ') : '—';
+      selectedLengthStat.textContent = subseq.length;
+      averageMass.textContent = formatAverageMass(masses.avg);
+      monoisotopicMass.textContent = formatMonoisotopicMass(masses.mono);
+
+      const messages = [...invalidResidues.length ? [errorBox.textContent] : []];
+      if (customSettings.hasCustomMass && !customSettings.hasResidueNumber) {
+        messages.push('Enter a residue number to apply the arbitrary mass.');
+      } else if (customSettings.hasResidueNumber && !customSettings.hasCustomMass) {
+        messages.push('Enter an arbitrary mass value to use the residue-number override.');
+      } else if (customSettings.hasResidueNumber && (customSettings.residueNumber < 1 || customSettings.residueNumber > length)) {
+        messages.push(`Arbitrary mass residue number must be between 1 and ${length}.`);
+      }
+      errorBox.textContent = messages.filter(Boolean).join('\n');
+    }
+
+    function syncBoundsFromHighlight() {
+      copyStatus.textContent = '';
+      const cleanSeq = getCleanSequence();
+      const original = sequenceInput.value;
+      if (!cleanSeq.length) {
+        updateFromBounds();
+        return;
+      }
+
+      const selStart = sequenceInput.selectionStart;
+      const selEnd = sequenceInput.selectionEnd;
+      if (selStart === selEnd) {
+        updateFromBounds();
+        return;
+      }
+
+      const prefix = original.slice(0, selStart);
+      const selectedRaw = original.slice(selStart, selEnd);
+
+      const cleanPrefix = sanitizeSequence(prefix).sequence.length;
+      const cleanSelected = sanitizeSequence(selectedRaw).sequence.length;
+
+      if (cleanSelected === 0) {
+        copyStatus.textContent = 'Highlighted text does not contain supported amino acid codes.';
+        return;
+      }
+
+      startInput.value = cleanPrefix + 1;
+      endInput.value = cleanPrefix + cleanSelected;
+      updateFromBounds();
+    }
+
+    async function copyText(text, successMessage) {
+      try {
+        await navigator.clipboard.writeText(text);
+        copyStatus.textContent = successMessage;
+      } catch (err) {
+        copyStatus.textContent = 'Clipboard copy failed. Your browser may require a secure context or permission.';
+      }
+    }
+
+    document.getElementById('syncSelectionBtn').addEventListener('click', syncBoundsFromHighlight);
+    document.getElementById('selectAllBtn').addEventListener('click', () => {
+      const seq = getCleanSequence();
+      if (!seq.length) {
+        updateFromBounds();
+        return;
+      }
+      startInput.value = 1;
+      endInput.value = seq.length;
+      updateFromBounds();
+    });
+
+    document.getElementById('clearBtn').addEventListener('click', () => {
+      sequenceInput.value = '';
+      fastaInput.value = '';
+      startInput.value = 1;
+      endInput.value = 1;
+      cysteineModSelect.value = 'unmodified';
+      customMassInput.value = '';
+      customResidueInput.value = '';
+      copyStatus.textContent = '';
+      updateFromBounds();
+    });
+
+    function formatSequenceInBox() {
+      const raw = sequenceInput.value;
+      const lines = raw.split(/\r?\n/);
+      const output = [];
+      let seqBuffer = [];
+
+      function flushBuffer() {
+        if (!seqBuffer.length) return;
+        const joined = seqBuffer.join('').replace(/[^A-Za-z]/g, '').toUpperCase();
+        if (joined.length) {
+          output.push(joined.match(/.{1,10}/g).join(' '));
+        }
+        seqBuffer = [];
+      }
+
+      for (const line of lines) {
+        if (line.trim().startsWith('>')) {
+          flushBuffer();
+          output.push(line);
+        } else {
+          seqBuffer.push(line);
+        }
+      }
+      flushBuffer();
+
+      if (output.length) sequenceInput.value = output.join('\n');
+    }
+
+    document.getElementById('loadExampleBtn').addEventListener('click', () => {
+      sequenceInput.value = '>example_peptide\nMKWVTFISLLFLFSSAYSRGVFRRDTHKSEIAHRFKDLGE';
+      formatSequenceInBox();
+      const seq = getCleanSequence();
+      startInput.value = 1;
+      endInput.value = seq.length;
+      updateFromBounds();
+    });
+
+    sequenceInput.addEventListener('input', () => {
+      const seq = getCleanSequence();
+      if (!seq.length) {
+        startInput.value = 1;
+        endInput.value = 1;
+      } else {
+        const end = parseInt(endInput.value, 10);
+        if (!Number.isFinite(end) || end > seq.length) endInput.value = seq.length;
+        const start = parseInt(startInput.value, 10);
+        if (!Number.isFinite(start) || start < 1) startInput.value = 1;
+      }
+      copyStatus.textContent = '';
+      updateFromBounds();
+    });
+
+    sequenceInput.addEventListener('mouseup', () => setTimeout(syncBoundsFromHighlight, 0));
+    sequenceInput.addEventListener('keyup', () => setTimeout(syncBoundsFromHighlight, 0));
+    startInput.addEventListener('input', updateFromBounds);
+    endInput.addEventListener('input', updateFromBounds);
+    cysteineModSelect.addEventListener('change', updateFromBounds);
+    customMassInput.addEventListener('input', updateFromBounds);
+    customResidueInput.addEventListener('input', updateFromBounds);
+
+    fastaInput.addEventListener('change', async (event) => {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+      const text = await file.text();
+      sequenceInput.value = text;
+      formatSequenceInBox();
+      const seq = getCleanSequence();
+      startInput.value = 1;
+      endInput.value = seq.length || 1;
+      copyStatus.textContent = '';
+      updateFromBounds();
+    });
+
+    document.getElementById('copyAverageBtn').addEventListener('click', () => {
+      const value = averageMass.textContent;
+      if (value === '—') return;
+      copyText(value, 'Average molecular weight copied.');
+    });
+
+    document.getElementById('copyMonoBtn').addEventListener('click', () => {
+      const value = monoisotopicMass.textContent;
+      if (value === '—') return;
+      copyText(value, 'Monoisotopic mass copied.');
+    });
+
+    document.getElementById('copyAllBtn').addEventListener('click', () => {
+      const rawSeq = selectedSequence.textContent === '—' ? '' : selectedSequence.textContent.replace(/ /g, '');
+      const seq = rawSeq;
+      if (!seq) return;
+      const text = [
+        `Selected sequence: ${seq}`,
+        `Average molecular weight: ${averageMass.textContent}`,
+        `Monoisotopic mass: ${monoisotopicMass.textContent}`
+      ].join('\n');
+      copyText(text, 'Selected sequence and masses copied.');
+    });
+
+    updateFromBounds();
+  </script>
+</body>
+</html>

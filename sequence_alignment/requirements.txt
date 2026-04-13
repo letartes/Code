@@ -1,0 +1,9 @@
+# Core requirement — BLOSUM62 and Smith-Waterman are built into protein_aligner.py
+# No packages are strictly required to run the tool.
+
+# OPTIONAL: enables CDR1/CDR2/CDR3 annotation (IMGT / Kabat / Chothia / Martin)
+# Requires HMMER to be installed first (see setup_mac.sh)
+abnumber>=0.3.2
+
+# OPTIONAL: if you want to use biopython for additional sequence utilities
+biopython>=1.81

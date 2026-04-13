@@ -1,0 +1,175 @@
+═══════════════════════════════════════════════════════════════════════════════
+  Protein Liability Analyzer — Build Instructions
+  Letarte Scientific Consulting
+═══════════════════════════════════════════════════════════════════════════════
+
+OVERVIEW
+────────
+These scripts turn the two Python source files into a standalone app that
+users can run without installing Python.
+
+  Source files (must both be present in the parent folder):
+    • protein_liability_gui_autohos.py      ← GUI application
+    • protein_liability_analyzer_v2.py      ← Analysis engine
+
+  Build files (this folder):
+    • protein_liability.spec                ← PyInstaller build recipe
+    • build_windows.bat                     ← Windows: one-click build
+    • build_mac.sh                          ← macOS: one-click build + DMG
+    • installer_windows.iss                 ← Inno Setup: Windows installer
+
+───────────────────────────────────────────────────────────────────────────────
+  WINDOWS — Build a .exe
+───────────────────────────────────────────────────────────────────────────────
+
+Prerequisites
+  • Python 3.8 or later  →  https://www.python.org/downloads/
+    ✓ Check "Add Python to PATH" during installation
+
+Steps
+  1. Open this folder in File Explorer
+  2. Double-click  build_windows.bat
+     • It installs PyInstaller automatically via pip
+     • Builds  dist\ProteinLiabilityAnalyzer.exe  (≈ 15 MB, no dependencies)
+     • The console window shows progress and any errors
+
+  That's it. You can distribute ProteinLiabilityAnalyzer.exe directly.
+
+
+  Optional: create a proper Windows installer (.exe Setup file)
+  ──────────────────────────────────────────────────────────────
+  The Inno Setup script (installer_windows.iss) builds a professional installer
+  with Start Menu shortcuts and an uninstaller.
+
+  1. Download and install Inno Setup 6 (free):
+       https://jrsoftware.org/isinfo.php
+  2. Open  installer_windows.iss  in Inno Setup (double-click or File → Open)
+  3. Press F9 or Build → Compile
+  4. The output will be:
+       dist\ProteinLiabilityAnalyzer_Setup_v2.0.exe
+
+───────────────────────────────────────────────────────────────────────────────
+  macOS — Build a .app and .dmg
+───────────────────────────────────────────────────────────────────────────────
+
+Prerequisites
+  • Python 3.8 or later  →  https://www.python.org/downloads/
+    (or install via Homebrew:  brew install python)
+  • Command-line tools   →  xcode-select --install
+
+  Optional (for a prettier drag-to-install DMG window):
+    brew install create-dmg
+
+Steps
+  1. Open Terminal
+  2. Navigate to this folder:
+       cd "/path/to/sequence_liabilities HOS/build"
+  3. Make the script executable (first time only):
+       chmod +x build_mac.sh
+  4. Run:
+       ./build_mac.sh
+
+  Outputs:
+    dist/ProteinLiabilityAnalyzer.app      ← drag to Applications to install
+    dist/ProteinLiabilityAnalyzer_v2.0.dmg ← share this file for distribution
+
+  Users open the .dmg, then drag the .app to their Applications folder.
+
+
+  First-launch security warning (Gatekeeper)
+  ──────────────────────────────────────────
+  Because the app is not signed with an Apple Developer certificate, macOS
+  will show "unidentified developer" on first launch.
+
+  Users can bypass this by:
+    • Right-clicking the .app → Open → Open  (one-time)
+    OR
+    • System Preferences → Security & Privacy → "Open Anyway"
+
+  If you have an Apple Developer account ($99/year), you can code-sign and
+  notarize the app to eliminate this warning:
+    codesign --deep --force --sign "Developer ID Application: Your Name (TEAMID)" \
+             dist/ProteinLiabilityAnalyzer.app
+    xcrun notarytool submit dist/ProteinLiabilityAnalyzer_v2.0.dmg \
+             --apple-id your@email.com --team-id TEAMID --wait
+
+───────────────────────────────────────────────────────────────────────────────
+  IMPORTANT — BUILD ON THE TARGET PLATFORM
+───────────────────────────────────────────────────────────────────────────────
+
+  PyInstaller must be run ON the same OS as the target:
+    • Build the .exe on a Windows machine
+    • Build the .app / .dmg on a Mac
+
+  You cannot cross-compile (e.g., build a .exe on a Mac).
+  If you only have a Mac, use a Windows VM or GitHub Actions to build
+  the Windows version (see below).
+
+───────────────────────────────────────────────────────────────────────────────
+  AUTOMATED BUILDS WITH GITHUB ACTIONS (OPTIONAL)
+───────────────────────────────────────────────────────────────────────────────
+
+  To build both platforms automatically on every push, add this workflow:
+  .github/workflows/build.yml
+
+  ─── .github/workflows/build.yml ──────────────────────────────────────────
+  name: Build executables
+
+  on: [push, workflow_dispatch]
+
+  jobs:
+    build-windows:
+      runs-on: windows-latest
+      steps:
+        - uses: actions/checkout@v4
+        - uses: actions/setup-python@v5
+          with: { python-version: '3.11' }
+        - run: pip install pyinstaller
+        - run: python -m PyInstaller build/protein_liability.spec
+          working-directory: .
+        - uses: actions/upload-artifact@v4
+          with:
+            name: windows-exe
+            path: dist/ProteinLiabilityAnalyzer.exe
+
+    build-mac:
+      runs-on: macos-latest
+      steps:
+        - uses: actions/checkout@v4
+        - uses: actions/setup-python@v5
+          with: { python-version: '3.11' }
+        - run: pip install pyinstaller
+        - run: python -m PyInstaller build/protein_liability.spec
+        - run: |
+            hdiutil create -volname "Protein Liability Analyzer 2.0" \
+              -srcfolder dist/ProteinLiabilityAnalyzer.app \
+              -ov -format UDZO dist/ProteinLiabilityAnalyzer_v2.0.dmg
+        - uses: actions/upload-artifact@v4
+          with:
+            name: mac-dmg
+            path: dist/ProteinLiabilityAnalyzer_v2.0.dmg
+  ───────────────────────────────────────────────────────────────────────────
+
+───────────────────────────────────────────────────────────────────────────────
+  TROUBLESHOOTING
+───────────────────────────────────────────────────────────────────────────────
+
+  "Module not found: protein_liability_analyzer_v2"
+    → Make sure both .py files are in the same folder before running the build.
+
+  "UPX is not available" warning
+    → Harmless. UPX compresses the binary; the build still works without it.
+      Install UPX for smaller output: https://upx.github.io/
+
+  App opens then immediately closes (Windows)
+    → Run the .exe from a Command Prompt to see the error message.
+
+  "tkinter not found" on Linux/WSL
+    → Install:  sudo apt install python3-tk
+
+  Large file size (>50 MB)
+    → Normal for PyInstaller --onefile. The spec already excludes heavy
+      packages (numpy, pandas, etc.). If you need smaller, use --onedir
+      instead (creates a folder rather than a single file).
+
+═══════════════════════════════════════════════════════════════════════════════

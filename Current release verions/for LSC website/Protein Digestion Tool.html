@@ -1,0 +1,602 @@
+<!-- Protein Digestion Tool — embed this entire block in a Squarespace Code Block -->
+<!-- All calculations run in the visitor's browser. No sequence data is transmitted. -->
+<!-- External requests: none. Pure vanilla JS, no React, no Babel, no external libraries. -->
+
+<style>
+  #pdt-root {
+    font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: #0b1020;
+    color: #e8edf7;
+    padding: 24px;
+    border-radius: 18px;
+    box-sizing: border-box;
+    width: 100%;
+  }
+  #pdt-root *, #pdt-root *::before, #pdt-root *::after { box-sizing: border-box; }
+
+  .pdt-card {
+    background: rgba(19,26,43,0.95);
+    border: 1px solid #2b3550;
+    border-radius: 18px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .pdt-lbl {
+    font-size: 14px;
+    font-weight: 600;
+    color: #7cc4ff;
+    margin-bottom: 10px;
+    display: block;
+  }
+  .pdt-row1 {
+    display: grid;
+    grid-template-columns: 1.4fr 0.9fr;
+    gap: 16px;
+    margin-bottom: 16px;
+    align-items: start;
+  }
+  .pdt-right-col {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .pdt-btn-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .pdt-btn {
+    background: linear-gradient(180deg,#22304d,#1b2740);
+    color: #e8edf7;
+    border: 1px solid #2b3550;
+    border-radius: 12px;
+    padding: 10px 18px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    transition: border-color 0.15s;
+  }
+  .pdt-btn:hover { border-color: #7cc4ff; }
+  .pdt-btn-run {
+    background: linear-gradient(180deg,#193650,#163048);
+    color: #7cc4ff;
+    border: 1px solid #7cc4ff;
+    border-radius: 12px;
+    padding: 13px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: inherit;
+    width: 100%;
+    margin-top: 20px;
+    transition: opacity 0.15s;
+  }
+  .pdt-btn-run:hover { opacity: 0.85; }
+  .pdt-btn-csv {
+    background: linear-gradient(180deg,#193650,#163048);
+    color: #8ef0c2;
+    border: 1px solid #8ef0c2;
+    border-radius: 12px;
+    padding: 10px 18px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    transition: opacity 0.15s;
+  }
+  .pdt-btn-csv:hover { opacity: 0.85; }
+  #pdt-seq {
+    width: 100%;
+    min-height: 512px;
+    resize: vertical;
+    background: #1a2338;
+    color: #e8edf7;
+    border: 1px solid #2b3550;
+    border-radius: 12px;
+    padding: 12px 14px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  #pdt-seq:focus { outline: 2px solid #7cc4ff; outline-offset: 1px; }
+  .pdt-radio-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 10px;
+    cursor: pointer;
+  }
+  .pdt-radio-row input[type=radio] { accent-color: #7cc4ff; margin-top: 2px; flex-shrink: 0; }
+  .pdt-radio-name { font-weight: 600; font-size: 13px; color: #e8edf7; }
+  .pdt-radio-desc { display: block; font-size: 11px; color: #aab6cf; margin-top: 1px; }
+  .pdt-params-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .pdt-param-label { font-size: 13px; font-weight: 500; color: #aab6cf; margin-bottom: 6px; }
+  .pdt-slider-row { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+  .pdt-slider-row input[type=range] { flex: 1; accent-color: #7cc4ff; }
+  .pdt-val-badge {
+    background: #1a2338;
+    color: #7cc4ff;
+    border: 1px solid #2b3550;
+    border-radius: 8px;
+    padding: 3px 10px;
+    font-size: 15px;
+    font-weight: 700;
+    min-width: 34px;
+    text-align: center;
+    font-family: ui-monospace, monospace;
+  }
+  .pdt-hint { font-size: 11px; color: #aab6cf; margin: 0; }
+  .pdt-loaded { font-size: 12px; color: #8ef0c2; margin-top: 8px; }
+  .pdt-privacy {
+    background: rgba(142,240,194,0.08);
+    border: 1px solid rgba(142,240,194,0.3);
+    border-radius: 14px;
+    padding: 11px 16px;
+    margin-bottom: 20px;
+    color: #8ef0c2;
+    font-size: 13px;
+  }
+  .pdt-error {
+    background: rgba(255,142,142,0.08);
+    border: 1px solid rgba(255,142,142,0.4);
+    border-radius: 12px;
+    padding: 11px 16px;
+    margin-bottom: 16px;
+    color: #ff8e8e;
+    font-size: 13px;
+    display: none;
+  }
+  .pdt-header {
+    background: rgba(19,26,43,0.95);
+    border: 1px solid #2b3550;
+    border-radius: 18px;
+    padding: 22px 28px;
+    margin-bottom: 20px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .pdt-header-emoji { font-size: 38px; line-height: 1; }
+  .pdt-header h1 { margin: 0; font-size: 22px; font-weight: 700; color: #e8edf7; letter-spacing: -0.3px; }
+  .pdt-header p  { margin: 5px 0 0; color: #aab6cf; font-size: 13px; }
+  .pdt-results-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .pdt-results-header h2 { margin: 0; font-size: 16px; font-weight: 700; color: #7cc4ff; }
+  .pdt-results-header p  { margin: 3px 0 0; font-size: 12px; color: #aab6cf; }
+  .pdt-results-controls  { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; }
+  .pdt-filter-input {
+    padding: 8px 12px;
+    background: #1a2338;
+    color: #e8edf7;
+    border: 1px solid #2b3550;
+    border-radius: 10px;
+    font-size: 13px;
+    font-family: inherit;
+    width: 200px;
+  }
+  .pdt-filter-input:focus { outline: 2px solid #7cc4ff; outline-offset: 1px; }
+  .pdt-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4,1fr);
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .pdt-stat { background: #1a2338; border: 1px solid #2b3550; border-radius: 14px; padding: 12px 14px; text-align: center; }
+  .pdt-stat-val { font-size: 17px; font-weight: 800; color: #7cc4ff; font-family: ui-monospace, monospace; }
+  .pdt-stat-lbl { font-size: 11px; color: #aab6cf; margin-top: 4px; }
+  .pdt-table-wrap { overflow-x: auto; }
+  .pdt-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .pdt-table thead tr { background: #1a2338; }
+  .pdt-table th {
+    padding: 10px 12px;
+    font-weight: 600;
+    color: #7cc4ff;
+    border-bottom: 1px solid #2b3550;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }
+  .pdt-table th:hover { color: #a8d8ff; }
+  .pdt-table td { padding: 8px 12px; border-bottom: 1px solid #2b3550; }
+  .pdt-table tbody tr:nth-child(odd)  { background: #131a2b; }
+  .pdt-table tbody tr:nth-child(even) { background: #1a2338; }
+  .pdt-footnote { margin: 10px 0 0; font-size: 11px; color: #aab6cf; }
+
+  @media (max-width: 750px) {
+    .pdt-row1        { grid-template-columns: 1fr; }
+    .pdt-params-grid { grid-template-columns: 1fr; }
+    .pdt-stats-grid  { grid-template-columns: repeat(2,1fr); }
+    #pdt-seq         { min-height: 220px; }
+  }
+</style>
+
+<div id="pdt-root">
+
+ <!-- 
+ <div class="pdt-header">
+    <span class="pdt-header-emoji">🧬</span>
+    <div>
+      <h1>Protein Digestion Tool</h1>
+      <p>In silico enzymatic digestion &nbsp;·&nbsp; Exact monoisotopic masses &nbsp;·&nbsp; Cysteine alkylation support</p>
+    </div>
+  </div>
+ -->
+
+  <div class="pdt-privacy">
+    <strong>100% local processing.</strong> All calculations run entirely in your browser using plain JavaScript.
+    No sequence data is ever transmitted, uploaded, or sent to any server or third-party service.
+    This tool makes no network requests after the page loads.
+  </div>
+
+  <div class="pdt-row1">
+
+    <div class="pdt-card">
+      <span class="pdt-lbl">&#9312; Protein Sequence</span>
+      <div class="pdt-btn-row">
+        <input id="pdt-file" type="file" accept=".fasta,.fa,.txt" style="display:none" />
+        <button class="pdt-btn" onclick="document.getElementById('pdt-file').click()">&#128194; Load FASTA / .txt File</button>
+        <button class="pdt-btn" onclick="pdtClear()">&#x2715; Clear</button>
+      </div>
+      <textarea id="pdt-seq" spellcheck="false"
+        placeholder="Paste amino acid sequence here (FASTA format supported)&#10;&#10;&gt;sp|P01857|IGHG1_HUMAN Immunoglobulin heavy constant gamma 1&#10;ASTKGPSVFPLAPSSKSTSGG..."></textarea>
+      <div id="pdt-seq-info" class="pdt-loaded" style="display:none"></div>
+    </div>
+
+    <div class="pdt-right-col">
+      <div class="pdt-card">
+        <span class="pdt-lbl">&#9313; Digestion Enzyme</span>
+        <div id="pdt-enzymes"></div>
+      </div>
+      <div class="pdt-card">
+        <span class="pdt-lbl">&#9314; Cysteine Modification</span>
+        <div id="pdt-cysmods"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="pdt-card">
+    <span class="pdt-lbl">&#9315; Parameters</span>
+    <div class="pdt-params-grid">
+      <div>
+        <div class="pdt-param-label">Minimum peptide length</div>
+        <div class="pdt-slider-row">
+          <input type="range" id="pdt-minlen" min="1" max="10" value="4" oninput="pdtUpdateSliders()" />
+          <span class="pdt-val-badge" id="pdt-minlen-val">4</span>
+        </div>
+        <p class="pdt-hint" id="pdt-minlen-hint">Peptides &lt; 4 AA will be excluded</p>
+      </div>
+      <div>
+        <div class="pdt-param-label">Missed cleavages</div>
+        <div class="pdt-slider-row">
+          <input type="range" id="pdt-mc" min="0" max="5" value="0" oninput="pdtUpdateSliders()" />
+          <span class="pdt-val-badge" id="pdt-mc-val">0</span>
+        </div>
+        <p class="pdt-hint" id="pdt-mc-hint">No missed cleavages (fully digested)</p>
+      </div>
+    </div>
+    <button class="pdt-btn-run" onclick="pdtRun()">&#9879;&#65039; Run Digestion</button>
+  </div>
+
+  <div class="pdt-error" id="pdt-error"></div>
+  <div id="pdt-results"></div>
+
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var AA_MASSES = {
+    G:57.02146, A:71.03711, V:99.06841, L:113.08406, I:113.08406,
+    P:97.05276,  F:147.06841, W:186.07931, M:131.04049, S:87.03203,
+    T:101.04768, C:103.00919, Y:163.06333, H:137.05891, D:115.02694,
+    E:129.04259, N:114.04293, Q:128.05858, K:128.09496, R:156.10111
+  };
+  var WATER = 18.01056;
+
+  var CYS_MODS = {
+    unmodified:      { label:'Unmodified',            delta:0,        info:'Free thiol (\u2013SH)' },
+    carbamidomethyl: { label:'Carbamidomethyl (CAM)', delta:57.02146, info:'+C\u2082H\u2083NO (iodoacetamide, +57.021\u00a0Da)' },
+    carboxymethyl:   { label:'Carboxymethyl (CM)',    delta:58.00548, info:'+C\u2082H\u2082O\u2082 (iodoacetic acid, +58.005\u00a0Da)' }
+  };
+
+  var ENZYMES = {
+    trypsin:      { name:'Trypsin',      desc:'Cleaves C-terminal to K, R (not before P)',
+      sites:function(s){var r=[];for(var i=0;i<s.length-1;i++)if((s[i]==='K'||s[i]==='R')&&s[i+1]!=='P')r.push(i);return r;}},
+    chymotrypsin: { name:'Chymotrypsin', desc:'Cleaves C-terminal to F, Y, W (not before P)',
+      sites:function(s){var r=[];for(var i=0;i<s.length-1;i++)if('FYW'.indexOf(s[i])>=0&&s[i+1]!=='P')r.push(i);return r;}},
+    lysc:         { name:'Lys-C',        desc:'Cleaves C-terminal to K',
+      sites:function(s){var r=[];for(var i=0;i<s.length-1;i++)if(s[i]==='K')r.push(i);return r;}},
+    aspn:         { name:'Asp-N',        desc:'Cleaves N-terminal to D (before D)',
+      sites:function(s){var r=[];for(var i=1;i<s.length;i++)if(s[i]==='D')r.push(i-1);return r;}},
+    thermolysin:  { name:'Thermolysin',  desc:'Cleaves N-terminal to L, I, V, F, A, M',
+      sites:function(s){var r=[];for(var i=1;i<s.length;i++)if('LIVFAM'.indexOf(s[i])>=0)r.push(i-1);return r;}},
+    gluc:         { name:'Glu-C',        desc:'Cleaves C-terminal to E (also D in phosphate buffer)',
+      sites:function(s){var r=[];for(var i=0;i<s.length-1;i++)if(s[i]==='E')r.push(i);return r;}}
+  };
+
+  var state = { enzyme:'trypsin', cysMod:'carbamidomethyl', results:null, sortKey:'start', sortDir:'asc' };
+
+  function buildRadios(containerId, items, groupName, defaultKey, onChange) {
+    var el = document.getElementById(containerId);
+    Object.keys(items).forEach(function (key) {
+      var item = items[key];
+      var lbl = document.createElement('label');
+      lbl.className = 'pdt-radio-row';
+      var inp = document.createElement('input');
+      inp.type = 'radio'; inp.name = groupName; inp.value = key;
+      if (key === defaultKey) inp.checked = true;
+      inp.addEventListener('change', function () { onChange(key); });
+      var nameEl = document.createElement('span');
+      nameEl.className = 'pdt-radio-name';
+      nameEl.textContent = item.name || item.label;
+      var descEl = document.createElement('span');
+      descEl.className = 'pdt-radio-desc';
+      descEl.textContent = item.desc || item.info;
+      nameEl.appendChild(descEl);
+      lbl.appendChild(inp);
+      lbl.appendChild(nameEl);
+      el.appendChild(lbl);
+    });
+  }
+
+  buildRadios('pdt-enzymes', ENZYMES,   'pdt-enz', 'trypsin',         function (k) { state.enzyme = k; });
+  buildRadios('pdt-cysmods', CYS_MODS,  'pdt-cys', 'carbamidomethyl', function (k) { state.cysMod = k; });
+
+  document.getElementById('pdt-file').addEventListener('change', function (e) {
+    var f = e.target.files && e.target.files[0];
+    if (!f) return;
+    // FileReader reads locally — no data is transmitted
+    var reader = new FileReader();
+    reader.onload = function (ev) {
+      document.getElementById('pdt-seq').value = ev.target.result;
+      updateSeqInfo();
+    };
+    reader.readAsText(f);
+    e.target.value = '';
+  });
+
+  document.getElementById('pdt-seq').addEventListener('input', updateSeqInfo);
+
+  function updateSeqInfo() {
+    var info   = document.getElementById('pdt-seq-info');
+    var parsed = parseSeq(document.getElementById('pdt-seq').value);
+    if (parsed.clean.length > 0) {
+      info.style.display = 'block';
+      info.textContent   = '\u2705 Sequence loaded: ' + parsed.clean.length.toLocaleString() + ' residues';
+    } else {
+      info.style.display = 'none';
+    }
+  }
+
+  window.pdtUpdateSliders = function () {
+    var ml = document.getElementById('pdt-minlen').value;
+    var mc = document.getElementById('pdt-mc').value;
+    document.getElementById('pdt-minlen-val').textContent  = ml;
+    document.getElementById('pdt-mc-val').textContent      = mc;
+    document.getElementById('pdt-minlen-hint').textContent = 'Peptides < ' + ml + ' AA will be excluded';
+    document.getElementById('pdt-mc-hint').textContent     = mc == 0
+      ? 'No missed cleavages (fully digested)'
+      : 'Up to ' + mc + ' internal cleavage site' + (mc > 1 ? 's' : '') + ' allowed per peptide';
+  };
+
+  window.pdtClear = function () {
+    document.getElementById('pdt-seq').value      = '';
+    document.getElementById('pdt-seq-info').style.display = 'none';
+    document.getElementById('pdt-error').style.display    = 'none';
+    document.getElementById('pdt-results').innerHTML      = '';
+    state.results = null;
+  };
+
+  function parseSeq(raw) {
+    if (!raw.trim()) return { clean:'', invalid:[] };
+    var seq = raw.trim().charAt(0) === '>'
+      ? raw.split('\n').filter(function (l) { return l.charAt(0) !== '>'; }).join('')
+      : raw;
+    seq = seq.replace(/[^A-Za-z]/g,'').toUpperCase();
+    var invalid = [], seen = {};
+    for (var i = 0; i < seq.length; i++) {
+      var aa = seq[i];
+      if (!AA_MASSES[aa] && !seen[aa]) { seen[aa] = 1; invalid.push(aa); }
+    }
+    return { clean:seq, invalid:invalid };
+  }
+
+  function peptideMass(pep, cysMod) {
+    var d = CYS_MODS[cysMod].delta, m = WATER;
+    for (var i = 0; i < pep.length; i++) {
+      var rm = AA_MASSES[pep[i]];
+      if (rm !== undefined) { m += rm; if (pep[i] === 'C') m += d; }
+    }
+    return m;
+  }
+
+  function digest(seq, enzymeKey, minLen, maxMC, cysMod) {
+    var cuts   = ENZYMES[enzymeKey].sites(seq);
+    var bounds = [0].concat(cuts.map(function (c) { return c + 1; }), [seq.length]);
+    var out = [], pepIdx = 1;
+    for (var i = 0; i < bounds.length - 1; i++) {
+      for (var mc = 0; mc <= maxMC; mc++) {
+        var j = i + 1 + mc;
+        if (j >= bounds.length) break;
+        var pep = seq.slice(bounds[i], bounds[j]);
+        if (pep.length < minLen) continue;
+        out.push({ idx:pepIdx++, seq:pep, start:bounds[i]+1, end:bounds[j],
+          len:pep.length, mc:mc, nCys:(pep.match(/C/g)||[]).length, mass:peptideMass(pep,cysMod) });
+      }
+    }
+    return out;
+  }
+
+  window.pdtRun = function () {
+    var errEl  = document.getElementById('pdt-error');
+    var parsed = parseSeq(document.getElementById('pdt-seq').value);
+    if (!parsed.clean) {
+      errEl.textContent = '\u26a0\ufe0f Please enter or load a protein sequence.';
+      errEl.style.display = 'block'; return;
+    }
+    if (parsed.invalid.length) {
+      errEl.textContent = '\u26a0\ufe0f Unknown characters: ' + parsed.invalid.join(', ') + '. Please check your sequence.';
+      errEl.style.display = 'block'; return;
+    }
+    errEl.style.display = 'none';
+    var minLen   = parseInt(document.getElementById('pdt-minlen').value, 10);
+    var mc       = parseInt(document.getElementById('pdt-mc').value, 10);
+    var peptides = digest(parsed.clean, state.enzyme, minLen, mc, state.cysMod);
+    state.results = { peptides:peptides, seqLen:parsed.clean.length,
+      enzyme:state.enzyme, cysMod:state.cysMod, minLen:minLen, missedMC:mc };
+    state.sortKey = 'start'; state.sortDir = 'asc';
+    renderResults();
+  };
+
+  function getRows() {
+    if (!state.results) return [];
+    var rows = state.results.peptides.slice();
+    var fi   = document.getElementById('pdt-filter-input');
+    var q    = fi ? fi.value.toUpperCase() : '';
+    if (q) rows = rows.filter(function (r) { return r.seq.indexOf(q) >= 0; });
+    var sk = state.sortKey, sd = state.sortDir;
+    rows.sort(function (a, b) {
+      var cmp = typeof a[sk] === 'string' ? a[sk].localeCompare(b[sk]) : a[sk] - b[sk];
+      return sd === 'asc' ? cmp : -cmp;
+    });
+    return rows;
+  }
+
+  function esc(s) {
+    return String(s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function statBox(val, label) {
+    return '<div class="pdt-stat"><div class="pdt-stat-val">' + esc(String(val)) +
+      '</div><div class="pdt-stat-lbl">' + esc(label) + '</div></div>';
+  }
+
+  function renderResults() {
+    var r      = state.results;
+    var rows   = getRows();
+    var masses = r.peptides.map(function (p) { return p.mass; });
+    var massRange = r.peptides.length
+      ? Math.min.apply(null, masses).toFixed(0) + ' \u2013 ' + Math.max.apply(null, masses).toFixed(0) + ' Da'
+      : '\u2014';
+    var nCysP  = r.peptides.filter(function (p) { return p.nCys > 0; }).length;
+    var cysMod = CYS_MODS[r.cysMod];
+    var filtNote = rows.length !== r.peptides.length
+      ? ' <span style="color:#f0c87c">(' + rows.length + ' shown after filter)</span>' : '';
+
+    var COLS = [
+      {k:'idx',   label:'#',                     align:'center'},
+      {k:'seq',   label:'Peptide Sequence',       align:'left'},
+      {k:'start', label:'Start',                  align:'center'},
+      {k:'end',   label:'End',                    align:'center'},
+      {k:'len',   label:'Length',                 align:'center'},
+      {k:'mc',    label:'MC',                     align:'center'},
+      {k:'nCys',  label:'Cys',                    align:'center'},
+      {k:'mass',  label:'Monoisotopic Mass (Da)', align:'right'}
+    ];
+
+    var thead = COLS.map(function (c) {
+      var arrow = state.sortKey === c.k
+        ? (state.sortDir === 'asc' ? '\u2191' : '\u2193')
+        : '<span style="color:#4a5a7a">\u2195</span>';
+      return '<th style="text-align:' + c.align + '" data-col="' + c.k + '">' + esc(c.label) + ' ' + arrow + '</th>';
+    }).join('');
+
+    var tbody = rows.length === 0
+      ? '<tr><td colspan="8" style="padding:30px;text-align:center;color:#aab6cf">No peptides match the current filter</td></tr>'
+      : rows.map(function (row, i) {
+          var bg  = i % 2 === 0 ? '#131a2b' : '#1a2338';
+          var mcC = row.mc   > 0 ? '#f0c87c' : '#aab6cf';
+          var mcW = row.mc   > 0 ? 700       : 400;
+          var cyC = row.nCys > 0 ? '#ff8e8e' : '#aab6cf';
+          var cyW = row.nCys > 0 ? 700       : 400;
+          var cyT = row.nCys > 0 ? '\u26a0 ' + row.nCys : '0';
+          return '<tr style="background:' + bg + ';border-bottom:1px solid #2b3550">' +
+            '<td style="padding:8px 12px;text-align:center;color:#4a5a7a;font-size:11px">' + row.idx + '</td>' +
+            '<td style="padding:8px 12px;font-family:ui-monospace,monospace;color:#e8edf7;letter-spacing:0.4px">' + esc(row.seq) + '</td>' +
+            '<td style="padding:8px 12px;text-align:center;color:#aab6cf">' + row.start + '</td>' +
+            '<td style="padding:8px 12px;text-align:center;color:#aab6cf">' + row.end   + '</td>' +
+            '<td style="padding:8px 12px;text-align:center;color:#aab6cf">' + row.len   + '</td>' +
+            '<td style="padding:8px 12px;text-align:center;color:' + mcC + ';font-weight:' + mcW + '">' + row.mc + '</td>' +
+            '<td style="padding:8px 12px;text-align:center;color:' + cyC + ';font-weight:' + cyW + '">' + cyT  + '</td>' +
+            '<td style="padding:8px 12px;text-align:right;font-family:ui-monospace,monospace;font-weight:600;color:#8ef0c2">' + row.mass.toFixed(5) + '</td>' +
+          '</tr>';
+        }).join('');
+
+    var cysDeltaNote = cysMod.delta > 0
+      ? ' (\u0394 +' + cysMod.delta.toFixed(5) + '\u00a0Da per Cys)' : '';
+
+    document.getElementById('pdt-results').innerHTML =
+      '<div class="pdt-card">' +
+        '<div class="pdt-results-header">' +
+          '<div>' +
+            '<h2>Digestion Results</h2>' +
+            '<p>' + esc(ENZYMES[r.enzyme].name) + ' &nbsp;\u00b7&nbsp; ' + esc(cysMod.label) +
+            ' &nbsp;\u00b7&nbsp; Min ' + r.minLen + ' AA &nbsp;\u00b7&nbsp; MC \u2264 ' + r.missedMC +
+            ' &nbsp;\u00b7&nbsp; <strong style="color:#7cc4ff">' + r.peptides.length + '</strong> peptides generated' + filtNote + '</p>' +
+          '</div>' +
+          '<div class="pdt-results-controls">' +
+            '<input id="pdt-filter-input" class="pdt-filter-input" placeholder="\uD83D\uDD0D Filter by sequence\u2026" oninput="pdtRefilter()" />' +
+            '<button class="pdt-btn-csv" onclick="pdtExportCSV()">\uD83D\uDCE5 Export CSV</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="pdt-stats-grid">' +
+          statBox(r.seqLen.toLocaleString() + ' AA', 'Protein Length') +
+          statBox(r.peptides.length, 'Peptides') +
+          statBox(nCysP, 'Cys-containing') +
+          statBox(massRange, 'Mass range') +
+        '</div>' +
+        '<div class="pdt-table-wrap">' +
+          '<table class="pdt-table">' +
+            '<thead><tr>' + thead + '</tr></thead>' +
+            '<tbody>' + tbody + '</tbody>' +
+          '</table>' +
+        '</div>' +
+        '<p class="pdt-footnote">\u2020 Masses are monoisotopic and include water (+18.01056\u00a0Da). ' +
+        'Cysteine modification: ' + esc(cysMod.label) + esc(cysDeltaNote) + '.</p>' +
+      '</div>';
+
+    document.querySelectorAll('#pdt-results .pdt-table th').forEach(function (th) {
+      th.addEventListener('click', function () {
+        var col = this.getAttribute('data-col');
+        if (state.sortKey === col) state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+        else { state.sortKey = col; state.sortDir = 'asc'; }
+        renderResults();
+      });
+    });
+  }
+
+  window.pdtRefilter  = function () { if (state.results) renderResults(); };
+
+  window.pdtExportCSV = function () {
+    var rows = getRows();
+    var hdr  = ['#','Sequence','Start','End','Length','Missed Cleavages','Cys','Monoisotopic Mass (Da)'];
+    var csv  = [hdr].concat(rows.map(function (r) {
+      return [r.idx, r.seq, r.start, r.end, r.len, r.mc, r.nCys, r.mass.toFixed(5)];
+    })).map(function (row) { return row.join(','); }).join('\n');
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type:'text/csv' }));
+    a.download = 'digestion_' + (state.results ? state.results.enzyme : 'result') +
+      '_' + new Date().toISOString().slice(0,10) + '.csv';
+    a.click();
+  };
+
+}());
+</script>
