@@ -1,0 +1,1387 @@
+<!DOCTYPE html>
+<!--
+  Protein Sequence Liability Analyzer — Standalone HTML / React
+  =============================================================
+  v2 — 3D Structure Mapping Edition
+
+  New in v2:
+    • PDB file upload for 3D structural context
+    • Cα-neighbor solvent-exposure estimation (10 Å shell)
+    • Secondary-structure classification (HELIX / SHEET PDB records)
+    • Structure-adjusted risk (buried → lower risk; exposed → elevated risk)
+    • 3Dmol.js interactive 3D viewer with per-liability sphere highlights
+    • Alignment of FASTA sequence to PDB chain (best-offset identity search)
+    • Structural detail columns in All Findings table
+
+  Sequence liabilities detected:
+    Deamidation · Oxidation · Free Cys · Isomerization · Glycosylation
+    Glycation · Sulfation · Pyroglutamate · Truncation/Clipping
+
+  CDR annotation (VH / VL) performed automatically for antibody sequences.
+
+  Letarte Scientific Consulting
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Protein Liability Analyzer + 3D Structure</title>
+
+  <!-- React 18 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+  <!-- Babel standalone — transpiles JSX in browser -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js" crossorigin="anonymous"></script>
+  <!-- 3Dmol.js is loaded ON DEMAND when the user clicks "Load 3D Viewer" in the Structure tab.
+       No sequence data is ever transmitted — only the library JS file is downloaded at that point. -->
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { height: 100%; }
+    body { overflow: hidden; }
+    ::-webkit-scrollbar { width: 7px; height: 7px; }
+    ::-webkit-scrollbar-track { background: #f0f2f5; }
+    ::-webkit-scrollbar-thumb { background: #c5cad4; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #9ba5b0; }
+    .viewer-3d canvas { display: block; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useMemo, useRef, useEffect, useCallback } = React;
+
+    // ─── CONSTANTS ────────────────────────────────────────────────────────────
+
+    const RISK_ORDER = { high: 0, medium: 1, low: 2, info: 3 };
+
+    const LIABILITIES = {
+      deamidation: {
+        label: "Deamidation", display_label: "Deamidation (Asn, Gln)",
+        short: "Deam", category: "Deamidation", risk: "medium",
+        color_text: "#c0392b", color_bg: "#fde8e8", color_border: "#e74c3c",
+        description: "Asn (N) and Gln (Q). Non-enzymatic deamidation converts N→D or Q→E, introducing charge variants.", span_length: 1,
+      },
+      oxidation: {
+        label: "Oxidation", display_label: "Oxidation (Met, Trp)",
+        short: "Ox", category: "Oxidation", risk: "high",
+        color_text: "#6c3483", color_bg: "#f4ecf7", color_border: "#9b59b6",
+        description: "Met (M) and Trp (W). Methionine sulfoxide and tryptophan oxidation under oxidative/photo-oxidative stress.", span_length: 1,
+      },
+      free_cys: {
+        label: "Free Cysteine", display_label: "Free / Unpaired Cysteine (Cys)",
+        short: "FreeCys", category: "Free Cysteine", risk: "medium",
+        color_text: "#1a5276", color_bg: "#eaf4fb", color_border: "#2980b9",
+        description: "Cys (C). Susceptible to disulfide scrambling, oxidation, and covalent adduct formation.", span_length: 1,
+      },
+      isomerization: {
+        label: "Isomerization", display_label: "Isomerization (Asp)",
+        short: "Isom", category: "Isomerization", risk: "medium",
+        color_text: "#7d6608", color_bg: "#fefde7", color_border: "#f1c40f",
+        description: "Asp (D) in susceptible motifs (DG, DS, DT, DA, DN, DD, DH). Succinimide-mediated D→isoD.", span_length: 1,
+      },
+      n_glycan: {
+        label: "N-Glycosylation Sequon", display_label: "N-Glycan sequon (N-X-S/T, X≠P)",
+        short: "N-Gly", category: "Glycosylation", risk: "medium",
+        color_text: "#1d6d2e", color_bg: "#e8f8e8", color_border: "#27ae60",
+        description: "N-X-S/T sequon (X ≠ Pro). Potential site for N-glycan addition in the ER/Golgi.", span_length: 3,
+      },
+      glycation: {
+        label: "Glycation", display_label: "Glycation (Lys)",
+        short: "Glycat", category: "Glycation", risk: "medium",
+        color_text: "#5b2333", color_bg: "#fce4ec", color_border: "#c2185b",
+        description: "Lys (K). Non-enzymatic glycation at accessible lysines; alters charge heterogeneity.", span_length: 1,
+      },
+      sulfation: {
+        label: "Tyrosine Sulfation", display_label: "Sulfation (Tyr, D/E at −1)",
+        short: "Sulf", category: "Sulfation", risk: "low",
+        color_text: "#4a235a", color_bg: "#f3e5f5", color_border: "#8e24aa",
+        description: "Tyr (Y) preceded by Asp (D) or Glu (E). TPST recognition motif; affects receptor binding.", span_length: 1,
+      },
+      pyroglu: {
+        label: "N-term Pyroglutamate", display_label: "Pyroglutamate (N-term Gln cyclisation)",
+        short: "pyroGlu", category: "Pyroglutamate", risk: "medium",
+        color_text: "#7e5109", color_bg: "#fef5e7", color_border: "#f0a500",
+        description: "N-terminal Gln (Q) cyclises to pyroglutamate (−17 Da). Common IgG heavy-chain modification.", span_length: 1,
+      },
+      trunc_dp: {
+        label: "Truncation – Asp–Pro Bond", display_label: "Truncation (Asp–Pro acid-labile bond)",
+        short: "Trunc", category: "Truncation", risk: "high",
+        color_text: "#922b21", color_bg: "#f9ebea", color_border: "#cb4335",
+        description: "Asp–Pro (DP) bond is acid-labile under mildly acidic conditions (pH 3–4).", span_length: 2,
+      },
+      cterm_k: {
+        label: "C-term Lys Clipping", display_label: "C-terminal Lys truncation",
+        short: "C-Lys", category: "C-term Processing", risk: "medium",
+        color_text: "#7b241c", color_bg: "#fdedec", color_border: "#e74c3c",
+        description: "C-terminal Lys removed by carboxypeptidase B during CHO expression.", span_length: 1,
+      },
+      cterm_amid: {
+        label: "C-term Alpha-Amidation", display_label: "C-term alpha-amidation (Pro at −1 relative to C-term GK)",
+        short: "C-Amid", category: "C-term Processing", risk: "medium",
+        color_text: "#1b5e20", color_bg: "#e8f5e9", color_border: "#43a047",
+        description: "Pro (P) at position −1 relative to a C-terminal Gly–Lys (GK). PAM-mediated amidation.", span_length: 1,
+      },
+    };
+
+    const CAT_ORDER = ["Deamidation","Oxidation","Free Cysteine","Isomerization","Glycosylation","Glycation","Sulfation","Pyroglutamate","Truncation","C-term Processing"];
+    const CAT_ICONS = { Deamidation:"🧪", Oxidation:"⚡", "Free Cysteine":"🔗", Isomerization:"🔄", Glycosylation:"🍬", Glycation:"🍯", Sulfation:"🟣", Pyroglutamate:"🔵", Truncation:"✂️", "C-term Processing":"🔚" };
+
+    const RISK_COLORS = {
+      high:   { bg:"#fde8e8", text:"#c0392b", border:"#e74c3c" },
+      medium: { bg:"#fef0e6", text:"#d35400", border:"#e67e22" },
+      low:    { bg:"#e8f8f5", text:"#0e6655", border:"#1abc9c" },
+      info:   { bg:"#d6eaf8", text:"#154360", border:"#2e86c1" },
+    };
+
+    const T = {
+      bgDark:"#1a1a2e", bgMid:"#16213e", bgAccent:"#0f3460", btnBlue:"#0d2d6b",
+      bgLight:"#f0f2f5", bgWhite:"#ffffff", bgPanel:"#f8f9fa",
+      fgDark:"#1a1a2e", fgMuted:"#6b7280", fgSubtle:"#9ba5b0", border:"#e5e7eb",
+    };
+
+    const CDR_SCHEMES = {
+      kabat: {
+        label: "Kabat",
+        vh: { h1co:8,  h1fe:-1, h2fs:14, h2fe:29, h1min:3, h1max:12 },
+        vl: { l1co:1,  l1fe:-1, l2fs:14, l2fe:20, l1min:6, l1max:17 },
+      },
+      chothia: {
+        label: "Chothia",
+        vh: { h1co:3,  h1fe:-1, h2fs:14, h2fe:30, h1min:4, h1max:15 },
+        vl: { l1co:1,  l1fe:-1, l2fs:13, l2fe:19, l1min:6, l1max:18 },
+      },
+      imgt: {
+        label: "IMGT",
+        vh: { h1co:4,  h1fe:2,  h2fs:20, h2fe:29, h1min:5, h1max:17 },
+        vl: { l1co:3,  l1fe:2,  l2fs:19, l2fe:28, l1min:5, l1max:17 },
+      },
+    };
+
+    // ─── PDB UTILITIES ────────────────────────────────────────────────────────
+
+    const AA3TO1 = {
+      ALA:'A',ARG:'R',ASN:'N',ASP:'D',CYS:'C',GLN:'Q',GLU:'E',
+      GLY:'G',HIS:'H',ILE:'I',LEU:'L',LYS:'K',MET:'M',PHE:'F',
+      PRO:'P',SER:'S',THR:'T',TRP:'W',TYR:'Y',VAL:'V',
+      // common non-standard / modified residues
+      MSE:'M', HYP:'P', TPO:'T', SEP:'S', PTR:'Y', CME:'C',
+      CSO:'C', OCS:'C', CSD:'C', HIC:'H', NEP:'H',
+    };
+
+    const EXPOSURE_COLORS = {
+      Exposed:      { bg:"#fde8e8", text:"#c0392b", border:"#e74c3c", dot:"#e74c3c" },
+      Partial:      { bg:"#fef0e6", text:"#d35400", border:"#e67e22", dot:"#e67e22" },
+      Buried:       { bg:"#e8f8f5", text:"#0e6655", border:"#1abc9c", dot:"#1abc9c" },
+      Unknown:      { bg:"#f4f5f7", text:"#6b7280", border:"#c5cad4", dot:"#c5cad4" },
+    };
+
+    const SECSTR_LABELS = { helix:"α Helix", sheet:"β Sheet", loop:"Loop/Coil" };
+    const SECSTR_COLORS = {
+      helix: { bg:"#e3f2fd", text:"#1565c0", border:"#2196f3" },
+      sheet: { bg:"#e8f5e9", text:"#1b5e20", border:"#4caf50" },
+      loop:  { bg:"#fff8e1", text:"#e65100", border:"#ff9800" },
+    };
+
+    /** Parse ATOM/HETATM records from PDB text.
+     *  Returns { chainResidues: { chainId: [residueObj, ...] } }
+     *  Only residues with a Cα atom are included.
+     */
+    function parsePDB(text) {
+      const byChainRes = {}; // "chain:resSeq:iCode" -> residueObj
+
+      for (const rawLine of text.split('\n')) {
+        const line = rawLine.padEnd(80, ' ');
+        const rec = line.slice(0, 6).trim();
+
+        if (rec === 'ATOM' || rec === 'HETATM') {
+          const name    = line.slice(12, 16).trim();
+          const altLoc  = line.slice(16, 17).trim();
+          const resName = line.slice(17, 20).trim();
+          const chain   = line.slice(21, 22);
+          const resSeq  = parseInt(line.slice(22, 26));
+          const iCode   = line.slice(26, 27).trim();
+          const x       = parseFloat(line.slice(30, 38));
+          const y       = parseFloat(line.slice(38, 46));
+          const z       = parseFloat(line.slice(46, 54));
+          const bfactor = parseFloat(line.slice(60, 66)) || 0;
+
+          if (isNaN(x) || isNaN(y) || isNaN(z) || isNaN(resSeq)) continue;
+          if (altLoc && altLoc !== 'A') continue; // use primary alt conf only
+          if (!(resName in AA3TO1)) continue;      // standard/known amino acids only
+
+          const key = `${chain}:${resSeq}:${iCode}`;
+          if (!byChainRes[key]) {
+            byChainRes[key] = {
+              resName, chain, resSeq, iCode,
+              aa: AA3TO1[resName] || 'X',
+              bfactor,
+              x: null, y: null, z: null,
+              secStr: 'loop',
+            };
+          }
+          if (name === 'CA') {
+            byChainRes[key].x = x;
+            byChainRes[key].y = y;
+            byChainRes[key].z = z;
+            byChainRes[key].bfactor = bfactor;
+          }
+        }
+      }
+
+      // Group by chain, filter to those with Cα, sort by resSeq
+      const chainResidues = {};
+      for (const res of Object.values(byChainRes)) {
+        if (res.x === null) continue; // no Cα atom found
+        if (!chainResidues[res.chain]) chainResidues[res.chain] = [];
+        chainResidues[res.chain].push(res);
+      }
+      for (const ch of Object.keys(chainResidues)) {
+        chainResidues[ch].sort((a, b) => a.resSeq - b.resSeq || a.iCode.localeCompare(b.iCode));
+        if (chainResidues[ch].length < 5) delete chainResidues[ch]; // skip tiny chains
+      }
+
+      // Parse secondary structure (HELIX / SHEET records)
+      for (const rawLine of text.split('\n')) {
+        const line = rawLine.padEnd(80, ' ');
+        const rec  = line.slice(0, 6).trim();
+        if (rec === 'HELIX') {
+          const ch    = line.slice(19, 20);
+          const start = parseInt(line.slice(21, 25));
+          const end   = parseInt(line.slice(33, 37));
+          if (!isNaN(start) && !isNaN(end) && chainResidues[ch]) {
+            for (const r of chainResidues[ch]) if (r.resSeq >= start && r.resSeq <= end) r.secStr = 'helix';
+          }
+        } else if (rec === 'SHEET') {
+          const ch    = line.slice(21, 22);
+          const start = parseInt(line.slice(22, 26));
+          const end   = parseInt(line.slice(33, 37));
+          if (!isNaN(start) && !isNaN(end) && chainResidues[ch]) {
+            for (const r of chainResidues[ch]) if (r.resSeq >= start && r.resSeq <= end) r.secStr = 'sheet';
+          }
+        }
+      }
+
+      return { chainResidues };
+    }
+
+    /** Cα-neighbor counting solvent exposure estimate.
+     *  For each residue, counts other Cα atoms within CUTOFF Å.
+     *  Fewer neighbors → more solvent-exposed.
+     *  Adds .neighborCount, .exposure (0–1, 1=most exposed), .exposureClass to each residue.
+     */
+    function calcExposure(chainResidues) {
+      const CUTOFF = 10.0; // Å — standard for Cα contact maps
+      const CUTOFF2 = CUTOFF * CUTOFF;
+      const all = Object.values(chainResidues).flat();
+      if (all.length === 0) return;
+
+      for (const res of all) {
+        let count = 0;
+        for (const other of all) {
+          if (other === res) continue;
+          const dx = res.x - other.x, dy = res.y - other.y, dz = res.z - other.z;
+          if (dx*dx + dy*dy + dz*dz <= CUTOFF2) count++;
+        }
+        res.neighborCount = count;
+      }
+
+      // Use percentile-based classification for robustness
+      const counts = all.map(r => r.neighborCount).sort((a, b) => a - b);
+      const p30 = counts[Math.floor(counts.length * 0.30)] || 0;
+      const p70 = counts[Math.floor(counts.length * 0.70)] || 0;
+      const maxN = counts[counts.length - 1] || 1;
+
+      for (const res of all) {
+        res.exposure = 1 - res.neighborCount / maxN; // 0=buried, 1=exposed
+        if (res.neighborCount <= p30) res.exposureClass = 'Exposed';
+        else if (res.neighborCount <= p70) res.exposureClass = 'Partial';
+        else res.exposureClass = 'Buried';
+      }
+    }
+
+    /** Find best linear offset alignment between a FASTA sequence and PDB chain residues.
+     *  Returns { mapping: {fastaPos -> pdbResidue}, identity, offset, matchCount, totalMapped }
+     */
+    function alignFastaToPDB(fastaSeq, pdbResidues) {
+      const n = fastaSeq.length;
+      const m = pdbResidues.length;
+      if (!m || !n) return { mapping: {}, identity: 0, offset: 0, matchCount: 0, totalMapped: 0 };
+
+      let bestScore = -1, bestOffset = 0;
+
+      for (let offset = -(n - 1); offset < m; offset++) {
+        let score = 0, overlap = 0;
+        const fiStart = Math.max(0, -offset);
+        const fiEnd   = Math.min(n, m - offset);
+        for (let fi = fiStart; fi < fiEnd; fi++) {
+          const pi = fi + offset;
+          if (pi >= 0 && pi < m) {
+            overlap++;
+            if (fastaSeq[fi] === pdbResidues[pi].aa) score++;
+          }
+        }
+        const minOverlap = Math.min(20, Math.min(n, m) * 0.4);
+        if (overlap >= minOverlap && score > bestScore) { bestScore = score; bestOffset = offset; }
+      }
+
+      const mapping = {};
+      let matchCount = 0, totalMapped = 0;
+      for (let fi = 0; fi < n; fi++) {
+        const pi = fi + bestOffset;
+        if (pi >= 0 && pi < m) {
+          mapping[fi] = pdbResidues[pi];
+          totalMapped++;
+          if (fastaSeq[fi] === pdbResidues[pi].aa) matchCount++;
+        }
+      }
+      const identity = totalMapped > 0 ? (matchCount / totalMapped * 100).toFixed(1) : '0.0';
+      return { mapping, identity, offset: bestOffset, matchCount, totalMapped };
+    }
+
+    /** Compute structure-adjusted risk for a single finding.
+     *
+     *  General principles:
+     *  • Buried residues are physically inaccessible to modifying reagents/enzymes → risk down
+     *  • Surface-exposed residues in flexible loops are maximally at risk → risk up for relevant types
+     *  • α-Helix / β-Sheet backbone H-bonds can protect N from deamidation and D from isomerization
+     */
+    function getStructuralRisk(finding, si) {
+      if (!si) return finding.risk;
+      const { exposureClass, secStr } = si;
+      let risk = finding.risk;
+      const t = finding.type;
+
+      if (exposureClass === 'Buried') {
+        // Buried → hard to modify; lower risk by one tier
+        if (risk === 'high')   risk = 'medium';
+        else if (risk === 'medium') risk = 'low';
+        // already low stays low
+      } else if (exposureClass === 'Exposed') {
+        // Exposed → easier to modify
+        if (t === 'glycation'  && risk === 'medium') risk = 'high'; // surface Lys = glycation hot-spot
+        if (t === 'oxidation'  && risk === 'medium') risk = 'high'; // exposed Trp/Met
+        // free_cys exposed = higher chance of disulfide scrambling / oxidation
+        if (t === 'free_cys'   && risk === 'medium') risk = 'high';
+      }
+
+      // Secondary structure modifiers
+      if (secStr === 'loop') {
+        // Loops are flexible → increase deamidation / isomerization from low if buried/partial
+        if ((t === 'deamidation' || t === 'isomerization') && risk === 'low') risk = 'medium';
+      }
+      if ((secStr === 'helix' || secStr === 'sheet') && exposureClass !== 'Exposed') {
+        // Structured regions reduce deamidation and isomerization rates
+        if ((t === 'deamidation' || t === 'isomerization') && risk === 'medium') risk = 'low';
+      }
+
+      return risk;
+    }
+
+    /** Build rationale string explaining risk change */
+    function structRiskRationale(origRisk, adjRisk, si) {
+      if (!si || origRisk === adjRisk) return '';
+      const { exposureClass, secStr, neighborCount } = si;
+      const parts = [];
+      if (exposureClass === 'Buried')   parts.push(`buried (${neighborCount} Cα neighbors)`);
+      if (exposureClass === 'Exposed')  parts.push(`solvent-exposed (${neighborCount} Cα neighbors)`);
+      if (exposureClass === 'Partial')  parts.push(`partially exposed`);
+      if (secStr === 'helix') parts.push('α-helix');
+      if (secStr === 'sheet') parts.push('β-sheet');
+      if (secStr === 'loop')  parts.push('loop/coil');
+      const dir = RISK_ORDER[adjRisk] < RISK_ORDER[origRisk] ? '↑ escalated' : '↓ reduced';
+      return `${dir} (${parts.join(', ')})`;
+    }
+
+    /** Enrich analysis results with structural data from PDB.
+     *  chainAssignments: { resultIndex: { chainId, pdbResidues, alignInfo } }
+     *  Returns deep-cloned results with .structInfo and .structuralRisk on each finding.
+     */
+    function enrichFindingsWithStructure(results, chainAssignments) {
+      if (!results || !chainAssignments) return results;
+      return results.map((result, ri) => {
+        const asgn = chainAssignments[ri];
+        if (!asgn) return result;
+        const { mapping } = asgn.alignInfo;
+        const enrichedFindings = result.findings.map(f => {
+          const si = mapping[f.pos0] || null;
+          const structuralRisk = getStructuralRisk(f, si);
+          return { ...f, structInfo: si, structuralRisk, structRationale: structRiskRationale(f.risk, structuralRisk, si) };
+        });
+        return { ...result, findings: enrichedFindings, chainAssignment: asgn };
+      });
+    }
+
+    // ─── SEQUENCE ENGINE ──────────────────────────────────────────────────────
+
+    function parseFasta(text) {
+      const seqs = []; let name = null, buf = [];
+      for (const raw of text.split('\n')) {
+        const line = raw.trim(); if (!line) continue;
+        if (line.startsWith('>')) {
+          if (buf.length && name !== null) seqs.push([name, buf.join('').toUpperCase()]);
+          name = line.slice(1).trim() || 'Sequence'; buf = [];
+        } else { buf.push(line.replace(/[^A-Za-z]/g,'')); }
+      }
+      if (buf.length && name !== null) seqs.push([name, buf.join('').toUpperCase()]);
+      return seqs;
+    }
+
+    const cleanSeq = s => s.replace(/[^A-Za-z]/g,'').toUpperCase();
+
+    function findCdrs(seq, scheme='kabat') {
+      const s = seq.toUpperCase(); const cdrs = [];
+      const p = CDR_SCHEMES[scheme] || CDR_SCHEMES.kabat;
+
+      // Try a list of patterns in priority order; return first match
+      function tryMatch(str, pats) {
+        for (const pat of pats) { const m = str.match(pat); if (m) return m; }
+        return null;
+      }
+
+      // ── VH ─────────────────────────────────────────────────────────────────
+      // FR4 anchor: WGQGT (IgG1/2/4), WGRGT, WGKGT, WGNGT … extend to cover rare germlines
+      // The 5th position is typically T or S; occasionally A or N.
+      const vhFr4 = tryMatch(s, [
+        /WG[QKHRNY]G[TSAND]/,   // primary: covers >99 % of IMGT VH germlines
+        /WG[A-Z]G[TS]/,         // broad fallback (any aa at pos 3)
+      ]);
+      if (vhFr4) {
+        const fr4 = vhFr4.index; let h3f = null;
+        const w3 = s.slice(Math.max(0,fr4-30),fr4); const r3 = w3.lastIndexOf('C');
+        if (r3>=0) { const h3s=Math.max(0,fr4-30)+r3+1,h3e=fr4-1,l=h3e-h3s+1;
+          if(l>=2&&l<=28){cdrs.push([h3s,h3e,'CDR-H3']);h3f=h3s;} }
+        const seg=s.slice(0,Math.max(0,fr4-35)); let fr2m=null;
+        // VH FR2: conserved W at H36, followed by bulky hydrophobic + charged/polar
+        // Primary pattern covers Kabat W36; fallback allows more variation at pos 2-3
+        for (const m of [...seg.matchAll(/W[VILMAFYW][RQHKNE]/g)]) fr2m=m;
+        if (!fr2m) for (const m of [...seg.matchAll(/W[VILMAFYW][A-Z]/g)]) fr2m=m;
+        if (fr2m) { const fr2=fr2m.index;
+          const w1=s.slice(Math.max(0,fr2-22),fr2); const r1=w1.lastIndexOf('C');
+          if(r1>=0){const ca=Math.max(0,fr2-22)+r1,h1s=ca+p.vh.h1co,h1e=fr2+p.vh.h1fe,l=h1e-h1s+1;
+            if(l>=p.vh.h1min&&l<=p.vh.h1max)cdrs.push([h1s,h1e,'CDR-H1']);}
+          let h2s=fr2+p.vh.h2fs,h2e=fr2+p.vh.h2fe; if(h3f!==null)h2e=Math.min(h2e,h3f-29);
+          const l2=h2e-h2s+1; if(l2>=5&&l2<=22)cdrs.push([h2s,h2e,'CDR-H2']); }
+      }
+
+      // ── VL ─────────────────────────────────────────────────────────────────
+      // FR4 anchor:
+      //   κ (kappa)  → FGQGTS, FGPGTS  — position 3 = Q or P
+      //   λ (lambda) → FGGGTS, FGAGTK  — position 3 = G or A  ← was MISSING before
+      // The old pattern FG[QNRST]G[TS] excluded G/A, silently missing λ chains.
+      const vlFr4 = tryMatch(s, [
+        /FG[QNRSTGPA]G[TSAND]/,  // kappa + lambda + rare variants
+        /FG[A-Z]G[TS]/,          // broad fallback
+      ]);
+      if (vlFr4) {
+        const fr4=vlFr4.index; let l3f=null;
+        const w3=s.slice(Math.max(0,fr4-18),fr4); const r3=w3.lastIndexOf('C');
+        if(r3>=0){const l3s=Math.max(0,fr4-18)+r3+1,l3e=fr4-1,l=l3e-l3s+1;
+          if(l>=3&&l<=14){cdrs.push([l3s,l3e,'CDR-L3']);l3f=l3s;}}
+        const seg=s.slice(0,Math.max(0,fr4-35)); let fr2m=null;
+        // VL FR2: conserved W at L35 (Kabat), flanked by aromatic + polar/hydrophobic
+        // Add R and K at pos 3 (seen in some λ germlines); add M as position-2 fallback
+        for (const m of [...seg.matchAll(/W[YFH][LQPRKM]/g)]) fr2m=m;
+        if (!fr2m) for (const m of [...seg.matchAll(/W[YFH][A-Z]/g)]) fr2m=m;
+        if (fr2m) { const fr2=fr2m.index;
+          const w1=s.slice(Math.max(0,fr2-28),fr2); const r1=w1.lastIndexOf('C');
+          if(r1>=0){const ca=Math.max(0,fr2-28)+r1,l1s=ca+p.vl.l1co,l1e=fr2+p.vl.l1fe,l=l1e-l1s+1;
+            if(l>=p.vl.l1min&&l<=p.vl.l1max)cdrs.push([l1s,l1e,'CDR-L1']);}
+          let l2s=fr2+p.vl.l2fs,l2e=fr2+p.vl.l2fe; if(l3f!==null)l2e=Math.min(l2e,l3f-29);
+          const l2=l2e-l2s+1; if(l2>=3&&l2<=12)cdrs.push([l2s,l2e,'CDR-L2']); }
+      }
+      return cdrs.sort((a,b)=>a[0]-b[0]);
+    }
+
+    function cdrAt(pos, cdrs) {
+      for (const [s,e,n] of cdrs) if (pos>=s&&pos<=e) return n;
+      return null;
+    }
+
+    function findLiabilities(seq, cdrs=[]) {
+      const f=[]; const n=seq.length;
+      function add(key,pos0,span,note='') {
+        const lib=LIABILITIES[key];
+        f.push({type:key,pos0,span,pos1:pos0+1,residues:seq.slice(pos0,pos0+span),
+          note,cdr:cdrAt(pos0,cdrs),...(({description,span_length,...rest})=>rest)(lib)});
+      }
+      for (let i=0;i<n;i++) { if('NQ'.includes(seq[i]))add('deamidation',i,1); }
+      for (let i=0;i<n;i++) { if('MW'.includes(seq[i]))add('oxidation',i,1); }
+      for (let i=0;i<n;i++) { if(seq[i]==='C')add('free_cys',i,1); }
+      const ISOM=new Set(['DG','DS','DT','DA','DN','DD','DH']);
+      for (let i=0;i<n-1;i++) { if(ISOM.has(seq.slice(i,i+2)))add('isomerization',i,1); }
+      for (let i=0;i<n-2;i++) if(seq[i]==='N'&&seq[i+1]!=='P'&&'ST'.includes(seq[i+2]))add('n_glycan',i,3);
+      for (let i=0;i<n;i++) { if(seq[i]==='K')add('glycation',i,1); }
+      for (let i=1;i<n;i++) { if(seq[i]==='Y'&&'DE'.includes(seq[i-1]))add('sulfation',i,1); }
+      if(n>0&&seq[0]==='Q')add('pyroglu',0,1,'N-term Gln → pyroglutamate (–17 Da)');
+      for (let i=0;i<n-1;i++) if(seq.slice(i,i+2)==='DP')add('trunc_dp',i,2,'Acid-labile Asp–Pro bond');
+      if(n>0&&seq[n-1]==='K')add('cterm_k',n-1,1,'C-terminal Lys — carboxypeptidase B clipping (CHO)');
+      if(n>=3&&seq[n-3]==='P'&&seq[n-2]==='G'&&seq[n-1]==='K')add('cterm_amid',n-3,1,'C-terminal PGK: Pro amidated by PAM, Gly and Lys lost');
+      return f;
+    }
+
+    function summarize(findings, seqLen) {
+      const byCat={},byRisk={};
+      for (const f of findings) {
+        if(!byCat[f.category])byCat[f.category]=[];byCat[f.category].push(f);
+        if(!byRisk[f.risk])byRisk[f.risk]=[];byRisk[f.risk].push(f);
+      }
+      return {total:findings.length,byCat,byRisk,seqLen};
+    }
+
+    function process(pairs, scheme='kabat') {
+      return pairs.map(([name,raw])=>{
+        const seq=cleanSeq(raw),cdrs=findCdrs(seq,scheme),findings=findLiabilities(seq,cdrs);
+        return {name,seq,findings,summary:summarize(findings,seq.length),cdrs};
+      });
+    }
+
+    // ─── COMPONENTS ───────────────────────────────────────────────────────────
+
+    function RiskBadge({risk, small=false}) {
+      const c=RISK_COLORS[risk]||RISK_COLORS.info;
+      return <span style={{display:'inline-block',padding:small?'1px 5px':'2px 8px',borderRadius:20,fontSize:small?'0.7em':'0.8em',fontWeight:700,background:c.bg,color:c.text,border:`1px solid ${c.border}`,whiteSpace:'nowrap'}}>{risk.toUpperCase()}</span>;
+    }
+
+    function ExposureBadge({cls, small=false}) {
+      if (!cls || cls === 'Unknown') return <span style={{color:T.fgSubtle,fontSize:'0.78em'}}>—</span>;
+      const c = EXPOSURE_COLORS[cls] || EXPOSURE_COLORS.Unknown;
+      return (
+        <span style={{display:'inline-flex',alignItems:'center',gap:3,padding:small?'1px 5px':'2px 7px',borderRadius:20,fontSize:small?'0.7em':'0.78em',fontWeight:700,background:c.bg,color:c.text,border:`1px solid ${c.border}`,whiteSpace:'nowrap'}}>
+          <span style={{width:7,height:7,borderRadius:'50%',background:c.dot,display:'inline-block',flexShrink:0}}/>
+          {cls}
+        </span>
+      );
+    }
+
+    function SecStrBadge({str}) {
+      if (!str) return <span style={{color:T.fgSubtle,fontSize:'0.78em'}}>—</span>;
+      const c = SECSTR_COLORS[str] || SECSTR_COLORS.loop;
+      return <span style={{display:'inline-block',padding:'1px 6px',borderRadius:4,fontSize:'0.78em',fontWeight:700,background:c.bg,color:c.text,border:`1px solid ${c.border}`,whiteSpace:'nowrap'}}>{SECSTR_LABELS[str]||str}</span>;
+    }
+
+    // ─── SUMMARY TAB ──────────────────────────────────────────────────────────
+
+    function ChainSummary({result}) {
+      const {name,findings,summary,cdrs,chainAssignment}=result;
+      const hc=(summary.byRisk.high||[]).length;
+      const hasStruct = !!chainAssignment;
+
+      // Structural summary
+      let structStats = null;
+      if (hasStruct) {
+        const withStruct = findings.filter(f => f.structInfo);
+        const byAdjRisk = {};
+        for (const f of withStruct) {
+          if (!byAdjRisk[f.structuralRisk]) byAdjRisk[f.structuralRisk] = 0;
+          byAdjRisk[f.structuralRisk]++;
+        }
+        const escalated = withStruct.filter(f => RISK_ORDER[f.structuralRisk] < RISK_ORDER[f.risk]).length;
+        const reduced   = withStruct.filter(f => RISK_ORDER[f.structuralRisk] > RISK_ORDER[f.risk]).length;
+        structStats = { withStruct: withStruct.length, total: findings.length, escalated, reduced, byAdjRisk,
+          identity: chainAssignment.alignInfo.identity, chainId: chainAssignment.chainId };
+      }
+
+      return (
+        <div style={{marginBottom:20,border:`1px solid ${T.border}`,borderRadius:8,overflow:'hidden'}}>
+          <div style={{background:T.bgPanel,padding:'8px 14px',borderBottom:`1px solid ${T.border}`,fontWeight:700,fontSize:'0.9em',color:T.fgDark,display:'flex',alignItems:'center',gap:10}}>
+            <span>▶ {name}</span>
+            <span style={{fontWeight:400,fontSize:'0.82em',color:T.fgMuted}}>{summary.seqLen} aa · {summary.total} findings{cdrs.length?` · ${cdrs.length} CDR(s)`:''}</span>
+            {hasStruct&&<span style={{marginLeft:'auto',fontSize:'0.8em',background:'#e3f2fd',color:'#1565c0',padding:'2px 8px',borderRadius:10,fontWeight:600}}>🧬 Chain {structStats.chainId} · {structStats.identity}% identity</span>}
+          </div>
+          <div style={{padding:'12px 14px'}}>
+            <div style={{padding:'8px 14px',borderRadius:6,marginBottom:10,fontWeight:600,fontSize:'0.88em',background:hc?'#fde8e8':'#d6eaf8',color:hc?'#c0392b':'#154360'}}>
+              {hc?`⚠️  ${hc} high-risk liabilit${hc===1?'y':'ies'} detected`:'✅  No high-risk liabilities detected'}
+            </div>
+            {cdrs.length>0&&(
+              <div style={{background:'#e3f2fd',color:'#1565c0',padding:'7px 12px',borderRadius:6,marginBottom:10,fontSize:'0.84em'}}>
+                📐&nbsp;<b>CDRs:</b>&nbsp;{cdrs.map(([s,e,n])=><span key={n} style={{marginRight:10}}><b>{n}</b> ({s+1}–{e+1})</span>)}
+              </div>
+            )}
+            {hasStruct&&(
+              <div style={{background:'#f3f8ff',border:'1px solid #c8dfff',borderRadius:6,padding:'8px 14px',marginBottom:10,fontSize:'0.84em',color:'#1a2a5e'}}>
+                <b>🔬 Structural context:</b>&nbsp;
+                {structStats.withStruct}/{structStats.total} liabilities mapped to structure &nbsp;·&nbsp;
+                <span style={{color:'#c0392b',fontWeight:600}}>{structStats.escalated} risk↑</span> &nbsp;·&nbsp;
+                <span style={{color:'#0e6655',fontWeight:600}}>{structStats.reduced} risk↓</span>
+                {Object.entries(structStats.byAdjRisk).sort((a,b)=>RISK_ORDER[a[0]]-RISK_ORDER[b[0]]).map(([r,c])=>(
+                  <span key={r} style={{marginLeft:8}}><RiskBadge risk={r} small/> {c}</span>
+                ))}
+              </div>
+            )}
+            <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:6,marginBottom:10}}>
+              {CAT_ORDER.map(cat=>{
+                const items=summary.byCat[cat]||[];
+                const h=items.filter(f=>f.risk==='high').length,m=items.filter(f=>f.risk==='medium').length,l=items.filter(f=>f.risk==='low').length;
+                return (
+                  <div key={cat} style={{background:T.bgWhite,border:`1px solid ${T.border}`,borderRadius:8,padding:'8px 4px',textAlign:'center'}}>
+                    <div style={{fontSize:16}}>{CAT_ICONS[cat]}</div>
+                    <div style={{fontSize:20,fontWeight:700,color:T.fgDark,lineHeight:1.2}}>{items.length}</div>
+                    <div style={{fontSize:'0.65em',fontWeight:700,color:T.fgMuted,marginBottom:3}}>{cat}</div>
+                    <div style={{display:'flex',flexWrap:'wrap',gap:2,justifyContent:'center'}}>
+                      {h>0&&<RiskBadge risk='high' small/>}{m>0&&<RiskBadge risk='medium' small/>}{l>0&&<RiskBadge risk='low' small/>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{fontSize:'0.82em',color:T.fgMuted}}>
+              High: <b style={{color:'#c0392b'}}>{(summary.byRisk.high||[]).length}</b> &nbsp;·&nbsp;
+              Med: <b style={{color:'#d35400'}}>{(summary.byRisk.medium||[]).length}</b> &nbsp;·&nbsp;
+              Low: <b style={{color:'#0e6655'}}>{(summary.byRisk.low||[]).length}</b>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function SummaryTab({results}) {
+      if (!results||!results.length) return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100%',color:T.fgMuted,fontSize:16}}>🔬&nbsp;Paste a sequence and click <b style={{margin:'0 6px'}}>ANALYZE</b></div>;
+      return (
+        <div style={{padding:'16px 20px',overflowY:'auto',height:'100%'}}>
+          {results.map((r,i)=><ChainSummary key={i} result={r}/>)}
+          <div style={{background:T.bgPanel,borderRadius:8,padding:'12px 16px',border:`1px solid ${T.border}`}}>
+            <div style={{fontWeight:700,fontSize:'0.86em',marginBottom:8,color:T.fgMuted}}>Liability Legend</div>
+            <div style={{display:'flex',flexWrap:'wrap',gap:5}}>
+              {Object.entries(LIABILITIES).map(([key,lib])=>(
+                <span key={key} title={lib.description} style={{padding:'2px 6px',borderRadius:4,fontSize:'0.76em',fontWeight:700,background:lib.color_bg,color:lib.color_text,border:`1px solid ${lib.color_border}`,fontFamily:'monospace',cursor:'help'}}>{lib.short}</span>
+              ))}
+            </div>
+            <div style={{fontSize:'0.74em',color:'#aaa',marginTop:8}}>CDR boundaries are approximate. Tryptic K/R sites excluded from truncation.</div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── ANNOTATED SEQUENCE TAB ───────────────────────────────────────────────
+
+    function AnnotatedSeqTab({results, scheme, setScheme}) {
+      const WRAP=60;
+      if (!results||!results.length) return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100%',color:T.fgMuted}}>Run an analysis to see the annotated sequence.</div>;
+      return (
+        <div style={{padding:'12px 16px',overflowY:'auto',height:'100%'}}>
+          <div style={{background:T.bgPanel,padding:'6px 12px',borderRadius:6,marginBottom:12,display:'flex',flexWrap:'wrap',gap:5,alignItems:'center',fontSize:'0.8em',color:T.fgMuted,border:`1px solid ${T.border}`}}>
+            <b>Key:</b>
+            {Object.entries(LIABILITIES).map(([k,lib])=>(
+              <span key={k} style={{padding:'1px 4px',borderRadius:3,fontFamily:'monospace',fontWeight:700,background:lib.color_bg,color:lib.color_text,fontSize:'0.88em'}}>{lib.short}</span>
+            ))}
+            <span style={{marginLeft:6}}>·</span>
+            <span style={{textDecoration:'underline',textDecorationThickness:2,textUnderlineOffset:2,fontFamily:'monospace',color:'#1565c0',fontWeight:700}}>CDR</span>
+            <span style={{fontStyle:'italic'}}>(underlined)</span>
+            <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:5}}>
+              <span style={{fontWeight:600,color:T.fgMuted}}>CDR scheme:</span>
+              <select value={scheme} onChange={e=>setScheme(e.target.value)}
+                style={{fontSize:'0.9em',padding:'2px 6px',borderRadius:4,border:`1px solid ${T.border}`,background:T.bgWhite,cursor:'pointer',fontWeight:600}}>
+                {Object.entries(CDR_SCHEMES).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+              </select>
+            </div>
+          </div>
+          {results.map(({name,seq,findings,cdrs},ci)=>{
+            const n=seq.length;
+            const pf=Array.from({length:n},()=>[]);
+            for(const f of findings) pf[f.pos0].push(f);
+            const cp={};for(const[cs,ce,cn]of cdrs)for(let p=cs;p<=ce;p++)cp[p]=cn;
+            const lines=[];
+            for(let st=0;st<n;st+=WRAP){
+              const en=Math.min(st+WRAP,n),chars=[];
+              for(let i=st;i<en;i++){
+                const aa=seq[i],fl=pf[i],ic=cp[i]!==undefined;
+                let sty={fontFamily:'monospace',fontSize:13,display:'inline-block',lineHeight:'22px'};
+                let ti=`Pos ${i+1}`;
+                if(fl.length){
+                  const bf=fl.reduce((a,b)=>RISK_ORDER[a.risk]<=RISK_ORDER[b.risk]?a:b);
+                  sty={...sty,background:bf.color_bg,color:bf.color_text,fontWeight:700,...(ic?{textDecoration:'underline',textDecorationThickness:2,textUnderlineOffset:2}:{})};
+                  const si = fl[0].structInfo;
+                  const expTxt = si ? ` [${si.exposureClass}, ${SECSTR_LABELS[si.secStr]||si.secStr}]` : '';
+                  ti=`Pos ${i+1}: ${bf.short}${ic?` [${cp[i]}]`:''}${expTxt}`;
+                } else if(ic){sty={...sty,textDecoration:'underline',textDecorationThickness:2,textUnderlineOffset:2,color:'#1565c0'};ti=`Pos ${i+1}: ${cp[i]}`;}
+                chars.push(<span key={i} style={sty} title={ti}>{aa}</span>);
+              }
+              const ct=cdrs.filter(([cs,ce])=>cs<en&&ce>=st).map(([cs,ce,cn])=>(
+                <span key={cn} style={{fontSize:'0.74em',color:'#1565c0',fontWeight:700,marginLeft:6}}>{cn}:{Math.max(cs,st)+1}–{Math.min(ce,en-1)+1}</span>
+              ));
+              lines.push(
+                <div key={st} style={{lineHeight:'22px',marginBottom:2}}>
+                  <span style={{color:T.fgSubtle,fontSize:11,fontFamily:'monospace',minWidth:40,display:'inline-block',userSelect:'none'}}>{String(st+1).padStart(5)}</span>
+                  {' '}{chars}{' '}
+                  <span style={{color:T.fgSubtle,fontSize:11,fontFamily:'monospace',userSelect:'none'}}>{en}</span>
+                  {ct}
+                </div>
+              );
+            }
+            return (
+              <div key={ci} style={{marginBottom:24}}>
+                <div style={{fontFamily:'monospace',fontWeight:700,fontSize:13,color:'#1565c0',marginBottom:4}}>▶ {name}</div>
+                <div style={{background:T.bgPanel,borderRadius:8,padding:'12px 14px',border:`1px solid ${T.border}`}}>{lines}</div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    // ─── FINDINGS TAB ─────────────────────────────────────────────────────────
+
+    function FindingsTab({results}) {
+      const [rf,setRf]=useState('All'),[cf,setCf]=useState('All'),[co,setCo]=useState(false);
+      const [sc,setSc]=useState('pos'),[sa,setSa]=useState(true);
+      const hasStruct = results && results.some(r => r.findings.some(f => f.structInfo));
+
+      const all=useMemo(()=>{
+        if(!results)return[];
+        return results.flatMap(({name,findings})=>findings.map(f=>({...f,chainName:name})));
+      },[results]);
+
+      const rows=useMemo(()=>{
+        let r=all;
+        if(rf!=='All')r=r.filter(x=>x.risk===rf.toLowerCase());
+        if(cf!=='All')r=r.filter(x=>x.category===cf);
+        if(co)r=r.filter(x=>x.cdr);
+        const ck={
+          pos:x=>x.pos1, residue:x=>x.residues[0], category:x=>x.category,
+          risk:x=>RISK_ORDER[x.risk], struct_risk:x=>RISK_ORDER[x.structuralRisk||x.risk],
+          type:x=>x.display_label, cdr:x=>x.cdr||'', note:x=>x.note||'',
+          exposure:x=>x.structInfo?x.structInfo.exposureClass:'', secstr:x=>x.structInfo?x.structInfo.secStr:'',
+        }[sc]||(x=>x.pos1);
+        return [...r].sort((a,b)=>{const av=ck(a),bv=ck(b);const c=typeof av==='number'?av-bv:String(av).localeCompare(String(bv));return sa?c:-c;});
+      },[all,rf,cf,co,sc,sa]);
+
+      const hs=(col)=>{if(sc===col)setSa(v=>!v);else{setSc(col);setSa(true);}};
+      const th={padding:'8px 10px',textAlign:'left',fontWeight:700,fontSize:'0.82em',color:'#444',background:T.bgPanel,borderBottom:`2px solid ${T.border}`,cursor:'pointer',userSelect:'none',whiteSpace:'nowrap'};
+      const si=(col)=><span style={{marginLeft:3,color:sc===col?'#333':'#ccc'}}>{sc===col?(sa?'↑':'↓'):'⇅'}</span>;
+
+      if(!results||!results.length) return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100%',color:T.fgMuted}}>Run an analysis to see findings.</div>;
+
+      return (
+        <div style={{display:'flex',flexDirection:'column',height:'100%'}}>
+          <div style={{background:T.bgPanel,padding:'8px 14px',display:'flex',flexWrap:'wrap',gap:10,alignItems:'center',borderBottom:`1px solid ${T.border}`,flexShrink:0}}>
+            <span style={{fontSize:'0.83em',color:T.fgMuted,fontWeight:600}}>Risk:</span>
+            {['All','High','Medium','Low'].map(r=>(
+              <label key={r} style={{display:'flex',alignItems:'center',gap:3,fontSize:'0.83em',cursor:'pointer'}}>
+                <input type='radio' name='rf' checked={rf===r} onChange={()=>setRf(r)}/>{r}
+              </label>
+            ))}
+            <span style={{fontSize:'0.83em',color:T.fgMuted,fontWeight:600,marginLeft:6}}>Category:</span>
+            <select value={cf} onChange={e=>setCf(e.target.value)} style={{fontSize:'0.83em',padding:'2px 6px',borderRadius:4,border:`1px solid ${T.border}`}}>
+              {['All',...CAT_ORDER].map(c=><option key={c} value={c}>{c}</option>)}
+            </select>
+            <label style={{display:'flex',alignItems:'center',gap:3,fontSize:'0.83em',cursor:'pointer',marginLeft:6}}>
+              <input type='checkbox' checked={co} onChange={e=>setCo(e.target.checked)}/>CDR only
+            </label>
+            <span style={{marginLeft:'auto',fontSize:'0.8em',color:T.fgMuted}}>{rows.length} finding{rows.length!==1?'s':''}</span>
+          </div>
+          <div style={{overflowY:'auto',flex:1}}>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.86em'}}>
+              <thead>
+                <tr>
+                  <th style={th} onClick={()=>hs('pos')}>Pos.{si('pos')}</th>
+                  <th style={th} onClick={()=>hs('residue')}>Res.{si('residue')}</th>
+                  <th style={th} onClick={()=>hs('category')}>Category{si('category')}</th>
+                  <th style={th} onClick={()=>hs('risk')}>Seq Risk{si('risk')}</th>
+                  {hasStruct&&<th style={{...th,background:'#e3f2fd',color:'#1565c0'}} onClick={()=>hs('exposure')}>Exposure{si('exposure')}</th>}
+                  {hasStruct&&<th style={{...th,background:'#e3f2fd',color:'#1565c0'}} onClick={()=>hs('secstr')}>Sec. Str.{si('secstr')}</th>}
+                  {hasStruct&&<th style={{...th,background:'#e3f2fd',color:'#1565c0'}} onClick={()=>hs('struct_risk')}>Struct. Risk{si('struct_risk')}</th>}
+                  <th style={th} onClick={()=>hs('type')}>Liability Type{si('type')}</th>
+                  <th style={th} onClick={()=>hs('cdr')}>CDR{si('cdr')}</th>
+                  <th style={th} onClick={()=>hs('note')}>Note{si('note')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((f,i)=>{
+                  const rc=RISK_COLORS[f.risk];
+                  const bg=rc?rc.bg+'33':'transparent';
+                  const td={padding:'7px 10px',borderBottom:`1px solid ${T.border}`,verticalAlign:'middle',background:bg};
+                  const si2 = f.structInfo;
+                  const adjRisk = f.structuralRisk || f.risk;
+                  const riskChanged = f.structuralRisk && f.structuralRisk !== f.risk;
+                  return (
+                    <tr key={i} title={f.structRationale||''}>
+                      <td style={{...td,fontFamily:'monospace',color:T.fgMuted,fontWeight:700,textAlign:'center',width:50}}>{f.pos1}</td>
+                      <td style={{...td,textAlign:'center',width:55}}>
+                        <span style={{background:f.color_bg,color:f.color_text,border:`1px solid ${f.color_border}`,padding:'1px 6px',borderRadius:3,fontFamily:'monospace',fontWeight:700}}>{f.residues[0]}</span>
+                      </td>
+                      <td style={td}>{f.category}</td>
+                      <td style={{...td,width:80}}><RiskBadge risk={f.risk} small/></td>
+                      {hasStruct&&<td style={{...td,background:'#f0f7ff',width:90}}>
+                        <ExposureBadge cls={si2?si2.exposureClass:'Unknown'} small/>
+                      </td>}
+                      {hasStruct&&<td style={{...td,background:'#f0f7ff',width:100}}>
+                        {si2?<SecStrBadge str={si2.secStr}/>:<span style={{color:T.fgSubtle,fontSize:'0.78em'}}>—</span>}
+                      </td>}
+                      {hasStruct&&<td style={{...td,background:'#f0f7ff',width:100}}>
+                        {si2?(
+                          <span style={{display:'inline-flex',alignItems:'center',gap:4}}>
+                            <RiskBadge risk={adjRisk} small/>
+                            {riskChanged&&<span style={{fontSize:'0.7em',fontWeight:700,color:RISK_ORDER[adjRisk]<RISK_ORDER[f.risk]?'#c0392b':'#0e6655'}}>{RISK_ORDER[adjRisk]<RISK_ORDER[f.risk]?'↑':'↓'}</span>}
+                          </span>
+                        ):<span style={{color:T.fgSubtle,fontSize:'0.78em'}}>—</span>}
+                      </td>}
+                      <td style={{...td,fontSize:'0.82em',color:'#555'}}>{f.display_label}</td>
+                      <td style={{...td,width:80,textAlign:'center'}}>
+                        {f.cdr?<span style={{background:'#e3f2fd',color:'#1565c0',padding:'1px 6px',borderRadius:10,fontSize:'0.76em',fontWeight:700}}>{f.cdr}</span>:'—'}
+                      </td>
+                      <td style={{...td,fontSize:'0.78em',color:'#555',maxWidth:220}}>{f.note||'—'}</td>
+                    </tr>
+                  );
+                })}
+                {rows.length===0&&<tr><td colSpan={hasStruct?10:7} style={{textAlign:'center',padding:24,color:T.fgMuted,fontStyle:'italic'}}>No findings match the current filters.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          {hasStruct&&<div style={{background:'#e3f2fd',padding:'5px 14px',fontSize:'0.75em',color:'#1565c0',borderTop:`1px solid #c8dfff`,flexShrink:0}}>
+            🧬 Blue columns = structural data from PDB · Struct. Risk = sequence risk adjusted for solvent exposure and secondary structure · Hover row for rationale · ↑ risk escalated · ↓ risk reduced
+          </div>}
+        </div>
+      );
+    }
+
+    // ─── 3D STRUCTURE TAB ─────────────────────────────────────────────────────
+
+    function StructureTab({ pdbText, structResults, pdbFileName, dmolStatus, load3Dmol }) {
+      const containerRef = useRef(null);
+      const viewerDivRef = useRef(null);
+      const viewerRef    = useRef(null);
+      const [showSurface, setShowSurface] = useState(false);
+      const [filterRisk,  setFilterRisk]  = useState('all');
+      const [colorBy,     setColorBy]     = useState('structrisk'); // 'structrisk' | 'seqrisk' | 'exposure' | 'secstr' | 'aatype'
+      const [showLabels,  setShowLabels]  = useState(false);
+
+      // Amino-acid physicochemical class → sphere color (standard biochem palette)
+      const AA_CLASS_COLOR = (() => {
+        const map = {};
+        for (const aa of 'FYW')    map[aa] = '#9b59b6'; // aromatic
+        for (const aa of 'KRH')    map[aa] = '#2980b9'; // positively charged
+        for (const aa of 'DE')     map[aa] = '#e74c3c'; // negatively charged
+        for (const aa of 'STNQC')  map[aa] = '#27ae60'; // polar uncharged / Cys
+        for (const aa of 'AVLIMPG') map[aa] = '#e67e22'; // nonpolar aliphatic
+        return map;
+      })();
+
+      // Build highlights array from results
+      const highlights = useMemo(() => {
+        if (!structResults) return [];
+        const seen = new Set();
+        const items = [];
+        for (const result of structResults) {
+          for (const f of result.findings) {
+            const si = f.structInfo;
+            if (!si) continue;
+            const key = `${si.chain}:${si.resSeq}`;
+            let color, label;
+            if (colorBy === 'structrisk' || colorBy === 'seqrisk') {
+              const risk = colorBy === 'structrisk' ? (f.structuralRisk||f.risk) : f.risk;
+              if (filterRisk !== 'all' && risk !== filterRisk) continue;
+              color = risk==='high'?'#e74c3c':risk==='medium'?'#e67e22':'#27ae60';
+              label = `${f.short} (${risk})`;
+            } else if (colorBy === 'exposure') {
+              const cls = si.exposureClass;
+              color = cls==='Exposed'?'#e74c3c':cls==='Partial'?'#e67e22':'#27ae60';
+              label = cls;
+            } else if (colorBy === 'secstr') {
+              const ss = si.secStr;
+              color = ss==='helix'?'#2196f3':ss==='sheet'?'#4caf50':'#ff9800';
+              label = SECSTR_LABELS[ss]||ss;
+            } else if (colorBy === 'aatype') {
+              // Color by amino-acid physicochemical class
+              color = AA_CLASS_COLOR[si.aa] || '#95a5a6';
+              // Rich label: 1-letter · 3-letter · residue number · modification abbreviation
+              label = `${si.aa} · ${si.resName} · #${si.resSeq} · ${f.short}`;
+            }
+            if (!seen.has(key)) {
+              seen.add(key);
+              items.push({ chain: si.chain, resi: si.resSeq, color, label, f });
+            } else {
+              // Multiple findings on the same residue — keep highest-risk entry,
+              // but for aatype/exposure/secstr modes the color is fixed by the residue, not risk
+              const existing = items.find(it => it.chain===si.chain && it.resi===si.resSeq);
+              if (existing && colorBy !== 'exposure' && colorBy !== 'secstr' && colorBy !== 'aatype') {
+                const existRisk = existing.f.structuralRisk||existing.f.risk;
+                const newRisk   = f.structuralRisk||f.risk;
+                if (RISK_ORDER[newRisk] < RISK_ORDER[existRisk]) {
+                  existing.color = color;
+                  existing.label = label;
+                  existing.f = f;
+                }
+              } else if (existing && colorBy === 'aatype') {
+                // In aatype mode, append additional modification to the label
+                if (!existing.label.includes(f.short)) {
+                  existing.label += ` / ${f.short}`;
+                }
+              }
+            }
+          }
+        }
+        return items;
+      }, [structResults, filterRisk, colorBy]);
+
+      // Initialize/update 3Dmol viewer — only runs once 3Dmol is ready
+      useEffect(() => {
+        if (!viewerDivRef.current || !pdbText) return;
+        if (dmolStatus !== 'ready' || !window.$3Dmol) return;
+
+        // Create viewer once
+        if (!viewerRef.current) {
+          viewerRef.current = window.$3Dmol.createViewer(viewerDivRef.current, {
+            backgroundColor: '#1a2236',
+            antialias: true,
+          });
+        }
+        const viewer = viewerRef.current;
+
+        viewer.removeAllModels();
+        viewer.removeAllSurfaces();
+        viewer.removeAllLabels();
+
+        // Load model
+        viewer.addModel(pdbText, 'pdb');
+
+        // Base: thin cartoon
+        viewer.setStyle({}, { cartoon: { color: '#607d9e', opacity: 0.85, thickness: 0.3 } });
+
+        // Liability spheres
+        for (const h of highlights) {
+          viewer.addStyle(
+            { chain: h.chain, resi: [h.resi], atom: 'CA' },
+            { sphere: { color: h.color, radius: 1.4, opacity: 0.92 } }
+          );
+          if (showLabels) {
+            viewer.addLabel(h.label, {
+              position: { chain: h.chain, resi: h.resi, atom: 'CA' },
+              backgroundColor: '#1a2236', backgroundOpacity: 0.7,
+              fontColor: h.color, fontSize: 10, borderColor: h.color, borderThickness: 1,
+            }, { chain: h.chain, resi: [h.resi], atom: 'CA' });
+          }
+        }
+
+        if (showSurface) {
+          viewer.addSurface(window.$3Dmol.SurfaceType.SAS, {
+            opacity: 0.3,
+            colorscheme: { gradient: 'rwb', min: -1, max: 1 },
+          }, {});
+        }
+
+        viewer.zoomTo();
+        viewer.render();
+      }, [pdbText, highlights, showSurface, showLabels, dmolStatus]);
+
+      // Cleanup on unmount
+      useEffect(() => {
+        return () => {
+          if (viewerRef.current) {
+            try { viewerRef.current.clear(); } catch(e) {}
+            viewerRef.current = null;
+          }
+        };
+      }, []);
+
+      if (!pdbText) {
+        return (
+          <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100%',gap:14,color:T.fgMuted,padding:40}}>
+            <div style={{fontSize:52}}>🧬</div>
+            <div style={{fontSize:17,fontWeight:700,color:T.fgDark}}>No PDB Structure Loaded</div>
+            <div style={{fontSize:'0.88em',textAlign:'center',maxWidth:420,lineHeight:1.7}}>
+              Upload a <b>.pdb</b> file in the left panel to visualize liabilities on the 3D structure.<br/>
+              The tool will automatically align the sequence and map liabilities onto residues,<br/>
+              coloring them by sequence risk, structural risk, exposure, or secondary structure.
+            </div>
+            <div style={{background:'#f3f8ff',border:'1px solid #c8dfff',borderRadius:8,padding:'10px 18px',fontSize:'0.82em',color:'#1a2a5e',maxWidth:380}}>
+              💡 Run <b>ANALYZE</b> on the sequence first, then load the PDB.
+            </div>
+          </div>
+        );
+      }
+
+      // PDB is loaded but 3Dmol library has not been downloaded yet — show consent gate.
+      // Only the ~2 MB 3Dmol.js library file is ever fetched; your sequence is never transmitted.
+      if (dmolStatus !== 'ready') {
+        return (
+          <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100%',gap:16,padding:40,background:'#111827'}}>
+            <div style={{fontSize:42}}>🧬</div>
+            <div style={{fontSize:16,fontWeight:700,color:'#cdd9e8'}}>3D Viewer requires the 3Dmol.js library</div>
+            <div style={{background:'#1e2a3a',border:'1px solid #2d3f55',borderRadius:10,padding:'18px 24px',maxWidth:440,lineHeight:1.75,fontSize:'0.85em',color:'#a0b4cc'}}>
+              <p style={{marginBottom:10}}>The 3D viewer uses <b style={{color:'#7eb8e8'}}>3Dmol.js</b>, a browser-based WebGL molecular rendering library (~2 MB).</p>
+              <p style={{marginBottom:10}}>Clicking the button below will download <b>only the library file</b> from <span style={{fontFamily:'monospace',color:'#7eb8e8'}}>3dmol.org</span>. <b style={{color:'#e8e8e8'}}>Your sequence and PDB data are processed entirely locally and are never transmitted to any server.</b></p>
+              <p style={{color:'#607d9e',fontSize:'0.9em'}}>If you prefer to stay completely offline, close this tab — all other analysis (sequence, CDR, exposure, risk) works without internet.</p>
+            </div>
+            {dmolStatus === 'error' && (
+              <div style={{color:'#e74c3c',fontSize:'0.85em',fontWeight:600}}>⚠ Failed to load 3Dmol.js — check your internet connection and retry.</div>
+            )}
+            <button onClick={load3Dmol} disabled={dmolStatus==='loading'}
+              style={{padding:'10px 28px',fontSize:14,fontWeight:700,borderRadius:6,border:'none',background:dmolStatus==='loading'?'#374151':'#1565c0',color:'#fff',cursor:dmolStatus==='loading'?'wait':'pointer'}}>
+              {dmolStatus==='loading'?'⏳ Downloading 3Dmol.js…':'Load 3D Viewer'}
+            </button>
+          </div>
+        );
+      }
+
+      const RISK_3D_COLORS = [
+        { color:'#e74c3c', label:'High Risk' },
+        { color:'#e67e22', label:'Medium Risk' },
+        { color:'#27ae60', label:'Low Risk' },
+        { color:'#607d9e', label:'No liability (backbone)' },
+      ];
+      const EXPOSURE_3D_COLORS = [
+        { color:'#e74c3c', label:'Exposed' },
+        { color:'#e67e22', label:'Partial' },
+        { color:'#27ae60', label:'Buried' },
+      ];
+      const SECSTR_3D_COLORS = [
+        { color:'#2196f3', label:'α Helix' },
+        { color:'#4caf50', label:'β Sheet' },
+        { color:'#ff9800', label:'Loop / Coil' },
+      ];
+      const AATYPE_3D_COLORS = [
+        { color:'#9b59b6', label:'Aromatic (F, Y, W)' },
+        { color:'#2980b9', label:'Pos. charged (K, R, H)' },
+        { color:'#e74c3c', label:'Neg. charged (D, E)' },
+        { color:'#27ae60', label:'Polar / Cys (S, T, N, Q, C)' },
+        { color:'#e67e22', label:'Nonpolar (A, V, L, I, M, P, G)' },
+        { color:'#95a5a6', label:'Other / unknown' },
+      ];
+      const legendItems = colorBy==='exposure' ? EXPOSURE_3D_COLORS
+                        : colorBy==='secstr'   ? SECSTR_3D_COLORS
+                        : colorBy==='aatype'   ? AATYPE_3D_COLORS
+                        : RISK_3D_COLORS;
+
+      return (
+        <div style={{display:'flex',flexDirection:'column',height:'100%',background:'#111827'}}>
+
+          {/* Controls bar */}
+          <div style={{background:'#1e2a3a',padding:'8px 14px',display:'flex',flexWrap:'wrap',gap:10,alignItems:'center',flexShrink:0,borderBottom:'1px solid #2d3f55'}}>
+            <span style={{color:'#a0b4cc',fontSize:'0.8em',fontWeight:700}}>Color by:</span>
+            {[['structrisk','Struct. Risk'],['seqrisk','Seq. Risk'],['exposure','Exposure'],['secstr','Sec. Structure'],['aatype','Amino Acid']].map(([v,l])=>(
+              <label key={v} style={{display:'flex',alignItems:'center',gap:3,fontSize:'0.8em',color:'#cdd9e8',cursor:'pointer'}}>
+                <input type='radio' name='colorBy' checked={colorBy===v} onChange={()=>setColorBy(v)}/>{l}
+              </label>
+            ))}
+            {(colorBy==='structrisk'||colorBy==='seqrisk')&&<>
+              <span style={{color:'#a0b4cc',fontSize:'0.8em',marginLeft:6,fontWeight:700}}>Show:</span>
+              {['all','high','medium','low'].map(r=>(
+                <label key={r} style={{display:'flex',alignItems:'center',gap:3,fontSize:'0.8em',color:'#cdd9e8',cursor:'pointer'}}>
+                  <input type='radio' name='fr3d' checked={filterRisk===r} onChange={()=>setFilterRisk(r)}/>{r==='all'?'All':r}
+                </label>
+              ))}
+            </>}
+            <label style={{display:'flex',alignItems:'center',gap:3,fontSize:'0.8em',color:'#cdd9e8',cursor:'pointer',marginLeft:6}}>
+              <input type='checkbox' checked={showSurface} onChange={e=>setShowSurface(e.target.checked)}/>Surface
+            </label>
+            <label style={{display:'flex',alignItems:'center',gap:3,fontSize:'0.8em',color:'#cdd9e8',cursor:'pointer'}}>
+              <input type='checkbox' checked={showLabels} onChange={e=>setShowLabels(e.target.checked)}/>Labels
+            </label>
+            {pdbFileName&&<span style={{marginLeft:'auto',fontSize:'0.75em',color:'#607d9e',fontStyle:'italic'}}>{pdbFileName}</span>}
+          </div>
+
+          {/* Viewer */}
+          <div ref={containerRef} style={{flex:1,position:'relative',overflow:'hidden'}}>
+            <div ref={viewerDivRef} className='viewer-3d' style={{position:'absolute',inset:0}}/>
+          </div>
+
+          {/* Legend */}
+          <div style={{background:'#1e2a3a',padding:'7px 14px',display:'flex',gap:16,alignItems:'center',flexShrink:0,borderTop:'1px solid #2d3f55',flexWrap:'wrap'}}>
+            <span style={{color:'#607d9e',fontSize:'0.74em',fontWeight:700}}>LEGEND:</span>
+            {legendItems.map(it=>(
+              <span key={it.label} style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:'0.76em',color:'#a0b4cc'}}>
+                <span style={{width:11,height:11,borderRadius:'50%',background:it.color,display:'inline-block',flexShrink:0}}/>
+                {it.label}
+              </span>
+            ))}
+            <span style={{marginLeft:'auto',fontSize:'0.73em',color:'#4a5e75',fontStyle:'italic'}}>
+              {highlights.length} residues highlighted · drag to rotate · scroll to zoom · right-click to translate
+            </span>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── APP ──────────────────────────────────────────────────────────────────
+
+    function App() {
+      const PH='>MyProtein_HC\nEVQLVESGGGLVQPGGSLRLSCAAGFNIKDTYIH...\n\nAccepts:\n  • FASTA (single or multi-chain)\n  • Raw amino-acid sequence\n  • Multiple FASTA entries in one paste';
+      const [input,setInput]  = useState(PH);
+      const [ph,setPh]        = useState(true);
+      const [results,setResults] = useState(null);
+      const [tab,setTab]      = useState(0);
+      const [busy,setBusy]    = useState(false);
+      const [status,setStatus]= useState('Ready.');
+      const [scheme,setScheme]= useState('kabat');
+      const fileRef           = useRef(null);
+      const pdbFileRef        = useRef(null);
+      const lastRawRef        = useRef('');
+
+      // PDB state
+      const [pdbText,    setPdbText]    = useState(null);
+      const [pdbParsed,  setPdbParsed]  = useState(null);
+      const [pdbFileName,setPdbFileName]= useState(null);
+      const [pdbBusy,    setPdbBusy]    = useState(false);
+      // Per-result chain selection: { resultIndex: chainId }
+      const [chainSel,   setChainSel]   = useState({});
+      // Computed per-result alignment info: { resultIndex: { chainId, pdbResidues, alignInfo } }
+      const [chainAssignments, setChainAssignments] = useState(null);
+
+      // 3Dmol.js lazy-loading state — library is NOT pre-loaded to avoid any outbound requests
+      // 'idle' | 'loading' | 'ready' | 'error'
+      const [dmolStatus, setDmolStatus] = useState(window.$3Dmol ? 'ready' : 'idle');
+      const load3Dmol = useCallback(() => {
+        if (window.$3Dmol) { setDmolStatus('ready'); return; }
+        setDmolStatus('loading');
+        const s = document.createElement('script');
+        s.src = 'https://3dmol.org/build/3Dmol-min.js';
+        s.onload  = () => setDmolStatus('ready');
+        s.onerror = () => setDmolStatus('error');
+        document.head.appendChild(s);
+      }, []);
+
+      const onFocus=()=>{if(ph){setInput('');setPh(false);}};
+      const onBlur=()=>{if(!input.trim()){setInput(PH);setPh(true);}};
+      const onLoad=e=>{const file=e.target.files[0];if(!file)return;const r=new FileReader();r.onload=ev=>{setInput(ev.target.result.trim());setPh(false);setStatus(`Loaded: ${file.name}`);};r.readAsText(file);e.target.value='';};
+      const onClear=()=>{setInput(PH);setPh(true);setResults(null);setStatus('Ready.');setChainAssignments(null);};
+
+      // Load PDB file
+      const onLoadPDB = e => {
+        const file = e.target.files[0]; if (!file) return;
+        setPdbBusy(true);
+        const reader = new FileReader();
+        reader.onload = ev => {
+          const text = ev.target.result;
+          try {
+            const parsed = parsePDB(text);
+            calcExposure(parsed.chainResidues);
+            const chains = Object.keys(parsed.chainResidues);
+            setPdbText(text);
+            setPdbParsed(parsed);
+            setPdbFileName(file.name);
+            // Reset chain selections to first available chain per result
+            setChainSel({});
+            setChainAssignments(null);
+            setStatus(`PDB loaded: ${file.name} — ${chains.length} chain(s): ${chains.join(', ')}`);
+          } catch(err) {
+            alert('Error parsing PDB: ' + err.message);
+          }
+          setPdbBusy(false);
+        };
+        reader.readAsText(file);
+        e.target.value = '';
+      };
+
+      // Re-compute chain assignments when results, pdbParsed, or chainSel changes
+      useEffect(() => {
+        if (!results || !pdbParsed) { setChainAssignments(null); return; }
+        const chains = Object.keys(pdbParsed.chainResidues);
+        if (!chains.length) { setChainAssignments(null); return; }
+        const assignments = {};
+        results.forEach((result, ri) => {
+          // Determine selected chain (fallback: pick best by identity)
+          const manualChain = chainSel[ri];
+          let bestChain = manualChain || chains[0];
+          let bestIdentity = -1;
+          if (!manualChain) {
+            for (const ch of chains) {
+              const pdbRes = pdbParsed.chainResidues[ch];
+              const ai = alignFastaToPDB(result.seq, pdbRes);
+              if (parseFloat(ai.identity) > bestIdentity) { bestIdentity = parseFloat(ai.identity); bestChain = ch; }
+            }
+          }
+          const pdbResidues = pdbParsed.chainResidues[bestChain] || [];
+          const alignInfo = alignFastaToPDB(result.seq, pdbResidues);
+          assignments[ri] = { chainId: bestChain, pdbResidues, alignInfo };
+        });
+        setChainAssignments(assignments);
+      }, [results, pdbParsed, chainSel]);
+
+      // Enriched results = results + structural data
+      const structResults = useMemo(() => {
+        if (!results) return null;
+        if (!chainAssignments) return results;
+        return enrichFindingsWithStructure(results, chainAssignments);
+      }, [results, chainAssignments]);
+
+      const runAnalysis = (raw, sch) => {
+        const pairs = raw.includes('>') ? parseFasta(raw) : [['Sequence', raw]];
+        if (!pairs.length) return;
+        const res = process(pairs, sch);
+        setResults(res);
+        setTab(0);
+        const tot = res.reduce((s,r)=>s+r.summary.total,0);
+        setStatus(`Done — ${res.length} chain(s), ${tot} liabilities flagged. CDR scheme: ${CDR_SCHEMES[sch].label}${pdbParsed?' · PDB ready for mapping':''}`);
+      };
+
+      const onAnalyze = () => {
+        const raw = ph ? '' : input.trim(); if (!raw) { alert('Please paste or load a sequence first.'); return; }
+        setBusy(true); setStatus('Analyzing…');
+        setTimeout(() => {
+          try { lastRawRef.current = raw; runAnalysis(raw, scheme); }
+          catch(err) { alert('Error: ' + err.message); }
+          setBusy(false);
+        }, 20);
+      };
+
+      useEffect(() => {
+        if (!lastRawRef.current) return;
+        try { runAnalysis(lastRawRef.current, scheme); } catch(e) {}
+      }, [scheme]);
+
+      const onDownload = () => {
+        if (!structResults) return;
+        // Simple CSV export of findings
+        const rows = [['Chain','Pos','Residue','Category','Seq Risk','Exposure','Sec Structure','Struct Risk','Struct Rationale','CDR','Note']];
+        for (const r of structResults) {
+          for (const f of r.findings) {
+            const si = f.structInfo;
+            rows.push([r.name, f.pos1, f.residues[0], f.category, f.risk,
+              si?si.exposureClass:'', si?SECSTR_LABELS[si.secStr]:'', f.structuralRisk||f.risk,
+              f.structRationale||'', f.cdr||'', f.note||'']);
+          }
+        }
+        const csv = rows.map(r=>r.map(c=>JSON.stringify(String(c))).join(',')).join('\n');
+        const blob = new Blob([csv], {type:'text/csv'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href=url; a.download='protein_liabilities.csv'; a.click();
+        URL.revokeObjectURL(url); setStatus('CSV exported.');
+      };
+
+      const tot = structResults ? structResults.reduce((s,r)=>s+r.summary.total,0) : 0;
+      const hi  = structResults ? structResults.reduce((s,r)=>s+(r.summary.byRisk.high||[]).length,0) : 0;
+      const pdbChains = pdbParsed ? Object.keys(pdbParsed.chainResidues) : [];
+
+      const TABS = ['Summary','Annotated Sequence','All Findings','3D Structure'];
+
+      return (
+        <div style={{height:'100vh',display:'flex',flexDirection:'column',background:T.bgDark,fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"}}>
+
+          {/* Header */}
+          <div style={{background:T.bgAccent,padding:'14px 22px',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0}}>
+            <div>
+              <div style={{color:'#fff',fontWeight:700,fontSize:17}}>🔬&nbsp; Protein Sequence Liability Analyzer&nbsp;<span style={{fontSize:12,background:'#1565c0',padding:'2px 8px',borderRadius:8,marginLeft:4,fontWeight:600}}>+ 3D Structure</span></div>
+              <div style={{color:'#a8b2c8',fontSize:10,marginTop:2}}>deamidation · oxidation · isomerization · glycosylation · pyroglutamate · truncation · CDR annotation · PDB structural mapping · solvent exposure</div>
+              <div style={{color:'#4a7fb5',fontSize:9,marginTop:3,display:'flex',alignItems:'center',gap:5}}>
+                <span style={{background:'#1a4a70',color:'#7eb8e8',padding:'1px 6px',borderRadius:3,fontWeight:700,letterSpacing:'0.3px'}}>🔒 PRIVATE</span>
+                All analysis runs locally in your browser — no sequence data is ever transmitted to any server
+              </div>
+            </div>
+            <div style={{color:'#7b8fb5',fontSize:11,fontStyle:'italic'}}>Letarte Scientific Consulting</div>
+          </div>
+
+          {/* Body */}
+          <div style={{flex:1,display:'flex',overflow:'hidden',background:T.bgLight,padding:'14px 14px 0'}}>
+
+            {/* Left panel */}
+            <div style={{width:400,flexShrink:0,display:'flex',flexDirection:'column',marginRight:12,gap:10}}>
+
+              {/* Sequence input */}
+              <div style={{background:T.bgWhite,border:`1px solid ${T.border}`,borderRadius:8,flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+                <div style={{background:T.bgPanel,padding:'10px 14px',borderBottom:`1px solid ${T.border}`,fontWeight:700,fontSize:12}}>Sequence Input</div>
+                <div style={{padding:'8px 10px',display:'flex',gap:6,borderBottom:`1px solid ${T.border}`,alignItems:'center'}}>
+                  <input ref={fileRef} type='file' accept='.fasta,.fa,.faa,.txt' style={{display:'none'}} onChange={onLoad}/>
+                  <button onClick={()=>fileRef.current?.click()} style={{padding:'5px 12px',fontSize:12,borderRadius:5,border:`1px solid ${T.border}`,background:T.bgPanel,cursor:'pointer',fontWeight:600}}>📁 Load FASTA</button>
+                  <button onClick={onClear} style={{padding:'5px 12px',fontSize:12,borderRadius:5,border:`1px solid ${T.border}`,background:T.bgPanel,cursor:'pointer',fontWeight:600}}>🗑 Clear</button>
+                </div>
+                <textarea value={ph?PH:input} onChange={e=>{setInput(e.target.value);setPh(false);}} onFocus={onFocus} onBlur={onBlur}
+                  style={{flex:1,resize:'none',border:'none',outline:'none',fontFamily:"'Courier New',monospace",fontSize:11,padding:'10px 12px',background:T.bgPanel,color:ph?T.fgMuted:T.fgDark,lineHeight:1.5}} spellCheck={false}/>
+                <div style={{background:'#f0f7ff',padding:'5px 12px',fontSize:10,color:'#2563eb',borderTop:`1px solid ${T.border}`}}>ℹ FASTA or raw sequence · single or multi-chain · CDR auto-detected</div>
+              </div>
+
+              {/* PDB upload section */}
+              <div style={{background:T.bgWhite,border:`1px solid ${T.border}`,borderRadius:8,flexShrink:0}}>
+                <div style={{background:'#e3f2fd',padding:'8px 14px',borderBottom:`1px solid #c8dfff`,fontWeight:700,fontSize:12,color:'#1565c0',display:'flex',alignItems:'center',gap:6}}>
+                  🧬 3D Structure Mapping
+                  <span style={{fontWeight:400,fontSize:10,color:'#5c8fd0',marginLeft:2}}>(optional)</span>
+                </div>
+                <div style={{padding:'10px 12px',display:'flex',flexDirection:'column',gap:8}}>
+                  <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                    <input ref={pdbFileRef} type='file' accept='.pdb,.ent' style={{display:'none'}} onChange={onLoadPDB}/>
+                    <button onClick={()=>pdbFileRef.current?.click()} disabled={pdbBusy}
+                      style={{padding:'6px 14px',fontSize:12,borderRadius:5,border:'1px solid #c8dfff',background:'#e3f2fd',cursor:'pointer',fontWeight:600,color:'#1565c0'}}>
+                      {pdbBusy?'⏳ Loading…':'📂 Load PDB'}
+                    </button>
+                    {pdbFileName&&<span style={{fontSize:11,color:'#1565c0',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{pdbFileName}</span>}
+                    {pdbParsed&&<button onClick={()=>{setPdbText(null);setPdbParsed(null);setPdbFileName(null);setChainAssignments(null);setChainSel({});setStatus('PDB cleared.');}}
+                      style={{padding:'3px 8px',fontSize:11,borderRadius:4,border:`1px solid ${T.border}`,background:T.bgPanel,cursor:'pointer',color:T.fgMuted,flexShrink:0}}>✕</button>}
+                  </div>
+
+                  {pdbParsed&&(
+                    <div style={{fontSize:11,color:'#1565c0',background:'#f0f7ff',borderRadius:6,padding:'6px 10px',display:'flex',flexDirection:'column',gap:4}}>
+                      <div style={{fontWeight:700}}>Chains in PDB:</div>
+                      {pdbChains.map(ch=>(
+                        <div key={ch} style={{display:'flex',gap:4,alignItems:'center'}}>
+                          <span style={{fontFamily:'monospace',fontWeight:700,color:'#0d47a1',minWidth:18}}>{ch}</span>
+                          <span style={{color:'#5c8fd0'}}>— {pdbParsed.chainResidues[ch].length} residues</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {pdbParsed&&results&&results.length>0&&(
+                    <div style={{fontSize:11,display:'flex',flexDirection:'column',gap:5}}>
+                      <div style={{fontWeight:700,color:T.fgMuted,fontSize:10}}>CHAIN ASSIGNMENT</div>
+                      {results.map((r,ri)=>{
+                        const asgn = chainAssignments?.[ri];
+                        return (
+                          <div key={ri} style={{display:'flex',alignItems:'center',gap:6}}>
+                            <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:T.fgDark,fontSize:11}}>{r.name}</span>
+                            <select value={chainSel[ri]||asgn?.chainId||pdbChains[0]||''}
+                              onChange={e=>setChainSel(prev=>({...prev,[ri]:e.target.value}))}
+                              style={{padding:'2px 5px',borderRadius:4,border:`1px solid ${T.border}`,fontSize:11,background:T.bgWhite}}>
+                              {pdbChains.map(ch=><option key={ch} value={ch}>Chain {ch} ({pdbParsed.chainResidues[ch].length} aa)</option>)}
+                            </select>
+                            {asgn&&<span style={{fontSize:10,fontWeight:700,color:parseFloat(asgn.alignInfo.identity)>80?'#0e6655':parseFloat(asgn.alignInfo.identity)>50?'#d35400':'#c0392b',whiteSpace:'nowrap'}}>{asgn.alignInfo.identity}% ID</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {!pdbParsed&&<div style={{fontSize:10,color:T.fgSubtle,lineHeight:1.5}}>Upload a PDB file to map liabilities onto the 3D structure, estimate solvent exposure, and adjust risk scores based on structural context.</div>}
+                </div>
+              </div>
+
+              <button onClick={onAnalyze} disabled={busy}
+                style={{padding:14,fontSize:14,fontWeight:700,background:busy?'#6b7280':T.btnBlue,color:'#ffffff',border:'none',borderRadius:6,cursor:busy?'wait':'pointer',letterSpacing:'0.5px',flexShrink:0}}
+                onMouseEnter={e=>{if(!busy)e.target.style.background='#1a4080';}}
+                onMouseLeave={e=>{if(!busy)e.target.style.background=T.btnBlue;}}>
+                {busy?'  Analyzing…  ':'  ANALYZE  '}
+              </button>
+            </div>
+
+            {/* Right panel */}
+            <div style={{flex:1,display:'flex',flexDirection:'column',background:T.bgWhite,border:`1px solid ${T.border}`,borderRadius:8,overflow:'hidden'}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',borderBottom:`2px solid ${T.border}`,background:T.bgPanel,padding:'0 14px',flexShrink:0}}>
+                <div style={{display:'flex'}}>
+                  {TABS.map((t,i)=>(
+                    <button key={i} onClick={()=>setTab(i)}
+                      style={{padding:'12px 16px',fontSize:13,fontWeight:tab===i?700:400,color:tab===i?T.fgDark:T.fgMuted,background:'transparent',border:'none',cursor:'pointer',borderBottom:tab===i?`2px solid ${T.btnBlue}`:'2px solid transparent',marginBottom:-2,display:'flex',alignItems:'center',gap:4}}>
+                      {t}
+                      {i===3&&pdbText&&<span style={{width:7,height:7,borderRadius:'50%',background:'#1565c0',display:'inline-block'}}/>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column'}}>
+                {tab===0&&<SummaryTab results={structResults}/>}
+                {tab===1&&<AnnotatedSeqTab results={structResults} scheme={scheme} setScheme={setScheme}/>}
+                {tab===2&&<FindingsTab results={structResults}/>}
+                {tab===3&&<StructureTab pdbText={pdbText} structResults={structResults} pdbFileName={pdbFileName} dmolStatus={dmolStatus} load3Dmol={load3Dmol}/>}
+              </div>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div style={{background:T.bgMid,padding:'8px 14px',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
+            <span style={{color:'#7b8fb5',fontSize:11}}>{status}</span>
+            <div style={{display:'flex',gap:8,alignItems:'center'}}>
+              {structResults&&<span style={{color:'#7b8fb5',fontSize:11,fontWeight:700,marginRight:4}}>{tot} liabilit{tot!==1?'ies':'y'} · {hi} high-risk{pdbParsed?' · 🧬 Structure active':''}</span>}
+              <button onClick={onDownload} disabled={!structResults}
+                style={{padding:'5px 12px',fontSize:11,borderRadius:4,background:structResults?'#1e293b':'#374151',color:structResults?'#e2e8f0':'#6b7280',border:'1px solid #374151',cursor:structResults?'pointer':'default',fontWeight:600}}>
+                💾 Export CSV
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── MOUNT ────────────────────────────────────────────────────────────────
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
