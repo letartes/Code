@@ -1240,7 +1240,8 @@
               f.structRationale||'', f.cdr||'', f.note||'']);
           }
         }
-        const csv = rows.map(r=>r.map(c=>JSON.stringify(String(c))).join(',')).join('\n');
+        const toAscii = s => String(s).replace(/[^\x20-\x7E]/g, '').replace(/"/g, '""');
+        const csv = rows.map(r=>r.map(c=>'"'+toAscii(c)+'"').join(',')).join('\n');
         const blob = new Blob([csv], {type:'text/csv'});
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href=url; a.download='protein_liabilities.csv'; a.click();
