@@ -1,1 +1,1 @@
-Those file are programs to perform protein characterization related tasks
+Those file are programs to perform protein characterization related tasks. They are meant to keep the sequence information private and not send any data to a third party website. They do use the react framework to generate the user interface which require an internet connection. 

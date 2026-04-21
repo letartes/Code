@@ -14,7 +14,7 @@
     • Structural detail columns in All Findings table
 
   Sequence liabilities detected:
-    Deamidation · Oxidation · Free Cys · Isomerization · Glycosylation
+    Deamidation · Oxidation · Isomerization · Glycosylation
     Glycation · Sulfation · Pyroglutamate · Truncation/Clipping
 
   CDR annotation (VH / VL) performed automatically for antibody sequences.
@@ -76,12 +76,6 @@
         color_text: "#6c3483", color_bg: "#f4ecf7", color_border: "#9b59b6",
         description: "Met (M) and Trp (W). Methionine sulfoxide and tryptophan oxidation under oxidative/photo-oxidative stress.", span_length: 1,
       },
-      free_cys: {
-        label: "Free Cysteine", display_label: "Free / Unpaired Cysteine (Cys)",
-        short: "FreeCys", category: "Free Cysteine", risk: "medium",
-        color_text: "#1a5276", color_bg: "#eaf4fb", color_border: "#2980b9",
-        description: "Cys (C). Susceptible to disulfide scrambling, oxidation, and covalent adduct formation.", span_length: 1,
-      },
       isomerization: {
         label: "Isomerization", display_label: "Isomerization (Asp)",
         short: "Isom", category: "Isomerization", risk: "medium",
@@ -132,8 +126,8 @@
       },
     };
 
-    const CAT_ORDER = ["Deamidation","Oxidation","Free Cysteine","Isomerization","Glycosylation","Glycation","Sulfation","Pyroglutamate","Truncation","C-term Processing"];
-    const CAT_ICONS = { Deamidation:"🧪", Oxidation:"⚡", "Free Cysteine":"🔗", Isomerization:"🔄", Glycosylation:"🍬", Glycation:"🍯", Sulfation:"🟣", Pyroglutamate:"🔵", Truncation:"✂️", "C-term Processing":"🔚" };
+    const CAT_ORDER = ["Deamidation","Oxidation","Isomerization","Glycosylation","Glycation","Sulfation","Pyroglutamate","Truncation","C-term Processing"];
+    const CAT_ICONS = { Deamidation:"🧪", Oxidation:"⚡", Isomerization:"🔄", Glycosylation:"🍬", Glycation:"🍯", Sulfation:"🟣", Pyroglutamate:"🔵", Truncation:"✂️", "C-term Processing":"🔚" };
 
     const RISK_COLORS = {
       high:   { bg:"#fde8e8", text:"#c0392b", border:"#e74c3c" },
@@ -369,8 +363,6 @@
         // Exposed → easier to modify
         if (t === 'glycation'  && risk === 'medium') risk = 'high'; // surface Lys = glycation hot-spot
         if (t === 'oxidation'  && risk === 'medium') risk = 'high'; // exposed Trp/Met
-        // free_cys exposed = higher chance of disulfide scrambling / oxidation
-        if (t === 'free_cys'   && risk === 'medium') risk = 'high';
       }
 
       // Secondary structure modifiers
@@ -515,7 +507,6 @@
       }
       for (let i=0;i<n;i++) { if('NQ'.includes(seq[i]))add('deamidation',i,1); }
       for (let i=0;i<n;i++) { if('MW'.includes(seq[i]))add('oxidation',i,1); }
-      for (let i=0;i<n;i++) { if(seq[i]==='C')add('free_cys',i,1); }
       const ISOM=new Set(['DG','DS','DT','DA','DN','DD','DH']);
       for (let i=0;i<n-1;i++) { if(ISOM.has(seq.slice(i,i+2)))add('isomerization',i,1); }
       for (let i=0;i<n-2;i++) if(seq[i]==='N'&&seq[i+1]!=='P'&&'ST'.includes(seq[i+2]))add('n_glycan',i,3);
@@ -876,24 +867,23 @@
             if (!si) continue;
             const key = `${si.chain}:${si.resSeq}`;
             let color, label;
+            const residueLabel = `${si.aa}${si.resSeq} ${f.short}`;
             if (colorBy === 'structrisk' || colorBy === 'seqrisk') {
               const risk = colorBy === 'structrisk' ? (f.structuralRisk||f.risk) : f.risk;
               if (filterRisk !== 'all' && risk !== filterRisk) continue;
               color = risk==='high'?'#e74c3c':risk==='medium'?'#e67e22':'#27ae60';
-              label = `${f.short} (${risk})`;
+              label = residueLabel;
             } else if (colorBy === 'exposure') {
               const cls = si.exposureClass;
               color = cls==='Exposed'?'#e74c3c':cls==='Partial'?'#e67e22':'#27ae60';
-              label = cls;
+              label = residueLabel;
             } else if (colorBy === 'secstr') {
               const ss = si.secStr;
               color = ss==='helix'?'#2196f3':ss==='sheet'?'#4caf50':'#ff9800';
-              label = SECSTR_LABELS[ss]||ss;
+              label = residueLabel;
             } else if (colorBy === 'aatype') {
-              // Color by amino-acid physicochemical class
               color = AA_CLASS_COLOR[si.aa] || '#95a5a6';
-              // Rich label: 1-letter · 3-letter · residue number · modification abbreviation
-              label = `${si.aa} · ${si.resName} · #${si.resSeq} · ${f.short}`;
+              label = residueLabel;
             }
             if (!seen.has(key)) {
               seen.add(key);
@@ -910,10 +900,9 @@
                   existing.label = label;
                   existing.f = f;
                 }
-              } else if (existing && colorBy === 'aatype') {
-                // In aatype mode, append additional modification to the label
+              } else if (existing) {
                 if (!existing.label.includes(f.short)) {
-                  existing.label += ` / ${f.short}`;
+                  existing.label += `/${f.short}`;
                 }
               }
             }
