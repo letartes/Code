@@ -1128,9 +1128,27 @@
         document.head.appendChild(s);
       }, []);
 
+      const formatSeq = raw => {
+        // Preserve FASTA headers, reformat sequence lines: no line breaks, space every 10 AAs
+        const lines = raw.split('\n');
+        const out = [];
+        let seqBuf = '';
+        const flushSeq = () => {
+          if (!seqBuf) return;
+          const clean = seqBuf.replace(/\s/g,'');
+          out.push(clean.match(/.{1,10}/g).join(' '));
+          seqBuf = '';
+        };
+        for (const line of lines) {
+          if (line.startsWith('>')) { flushSeq(); out.push(line); }
+          else seqBuf += line;
+        }
+        flushSeq();
+        return out.join('\n');
+      };
       const onFocus=()=>{if(ph){setInput('');setPh(false);}};
       const onBlur=()=>{if(!input.trim()){setInput(PH);setPh(true);}};
-      const onLoad=e=>{const file=e.target.files[0];if(!file)return;const r=new FileReader();r.onload=ev=>{setInput(ev.target.result.trim());setPh(false);setStatus(`Loaded: ${file.name}`);};r.readAsText(file);e.target.value='';};
+      const onLoad=e=>{const file=e.target.files[0];if(!file)return;const r=new FileReader();r.onload=ev=>{setInput(formatSeq(ev.target.result.trim()));setPh(false);setStatus(`Loaded: ${file.name}`);};r.readAsText(file);e.target.value='';};
       const onClear=()=>{setInput(PH);setPh(true);setResults(null);setStatus('Ready.');setChainAssignments(null);};
 
       // Load PDB file
@@ -1273,7 +1291,7 @@
                   <button onClick={()=>fileRef.current?.click()} style={{padding:'6px 14px',fontSize:12,borderRadius:10,border:`1px solid ${T.border}`,background:'linear-gradient(180deg,#22304d,#1b2740)',cursor:'pointer',fontWeight:600,color:'#e8edf7',transition:'border-color 0.15s'}}>📁 Load FASTA</button>
                   <button onClick={onClear} style={{padding:'6px 14px',fontSize:12,borderRadius:10,border:`1px solid ${T.border}`,background:'linear-gradient(180deg,#22304d,#1b2740)',cursor:'pointer',fontWeight:600,color:'#e8edf7',transition:'border-color 0.15s'}}>🗑 Clear</button>
                 </div>
-                <textarea value={ph?PH:input} onChange={e=>{setInput(e.target.value);setPh(false);}} onFocus={onFocus} onBlur={onBlur}
+                <textarea value={ph?PH:input} onChange={e=>{setInput(formatSeq(e.target.value));setPh(false);}} onFocus={onFocus} onBlur={onBlur}
                   style={{flex:1,resize:'none',border:'none',outline:'none',fontFamily:"'Courier New',monospace",fontSize:11,padding:'10px 12px',background:'#0f1624',color:ph?T.fgMuted:T.fgDark,lineHeight:1.5}} spellCheck={false}/>
                 <div style={{background:'rgba(142,240,194,0.07)',padding:'5px 12px',fontSize:10,color:'#8ef0c2',borderTop:`1px solid ${T.border}`}}>ℹ FASTA or raw sequence · single or multi-chain · CDR auto-detected</div>
               </div>
