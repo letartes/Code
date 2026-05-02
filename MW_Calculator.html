@@ -610,6 +610,13 @@
     var cleanSelected = sanitizeSequence(selectedRaw).sequence.length;
 
     if (cleanSelected === 0) {
+      if (selectedRaw.trim().startsWith('>')) {
+        selectedDisplay.textContent = '—';
+        statSelected.textContent = '0';
+        avgMassEl.textContent  = '—';
+        monoMassEl.textContent = '—';
+        return;
+      }
       copyStatus.textContent = 'Highlighted text does not contain supported amino acid codes.';
       return;
     }
