@@ -165,6 +165,8 @@
   #amc-selected-display {
     width: 100%;
     min-height: 44px;
+    max-height: 280px;
+    overflow-y: auto;
     background: #1a2338;
     color: #e8edf7;
     border: 1px solid #2b3550;
@@ -257,6 +259,20 @@
     margin-top: 6px;
   }
 
+  /* ── Mass lookup results ── */
+  .amc-match-result {
+    padding: 7px 8px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid #2b3550;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  .amc-match-result:hover { background: rgba(124,196,255,0.08); }
+  .amc-match-result:last-child { border-bottom: none; margin-bottom: 0; }
+  .amc-match-meta { font-size: 11px; color: #aab6cf; margin-bottom: 3px; }
+  .amc-match-seq  { font-size: 13px; color: #e8edf7; letter-spacing: 0.02em; }
+
   /* ── Separator ── */
   .amc-sep {
     border: none;
@@ -330,7 +346,13 @@
 
       <div class="amc-btn-row" style="margin-bottom:14px">
         <button class="amc-btn-blue" onclick="amcSelectAll()">Select full sequence</button>
-        <button class="amc-btn" onclick="amcSyncFromHighlight()">Use highlighted text</button>
+        <button class="amc-btn" onclick="amcUseHighlighted()">Use highlighted text</button>
+        <button class="amc-btn" id="amc-mass-lookup-btn" onclick="amcToggleMassLookup()">Specify mass</button>
+      </div>
+
+      <div id="amc-mass-lookup-panel" style="display:none;margin-bottom:14px">
+        <span class="amc-field-lbl">Target average mass (Da)</span>
+        <input id="amc-target-mass" class="amc-input" type="number" step="any" placeholder="e.g. 1045.23"/>
       </div>
 
       <!-- Selected sequence read-only -->
@@ -451,6 +473,10 @@
   var copyStatus      = document.getElementById('amc-copy-status');
   var statTotal       = document.getElementById('amc-stat-total');
   var statSelected    = document.getElementById('amc-stat-selected');
+  var massLookupPanel = document.getElementById('amc-mass-lookup-panel');
+  var massLookupBtn   = document.getElementById('amc-mass-lookup-btn');
+  var targetMassEl    = document.getElementById('amc-target-mass');
+  var amcMassLookupActive = false;
 
   /* ── Sequence sanitizer ── */
   function sanitizeSequence(raw) {
@@ -595,6 +621,7 @@
 
   /* ── Sync bounds from textarea text selection ── */
   function amcSyncFromHighlight() {
+    if (amcMassLookupActive) return;
     copyStatus.textContent = '';
     var cleanSeq = getCleanSeq();
     var original = seqInput.value;
@@ -628,6 +655,7 @@
 
   /* ── Select all ── */
   window.amcSelectAll = function() {
+    if (amcMassLookupActive) amcSetMassLookupActive(false);
     var seq = getCleanSeq();
     if (!seq.length) { updateFromBounds(); return; }
     startInput.value = 1;
@@ -667,6 +695,7 @@
 
   /* ── Clear ── */
   window.amcClear = function() {
+    if (amcMassLookupActive) amcSetMassLookupActive(false);
     seqInput.value         = '';
     fastaFile.value        = '';
     startInput.value       = 1;
@@ -747,18 +776,139 @@
       if (!isFinite(s) || s < 1) startInput.value = 1;
     }
     copyStatus.textContent = '';
+    if (amcMassLookupActive) { amcRunMassLookup(); return; }
     updateFromBounds();
   });
 
-  seqInput.addEventListener('mouseup', function(){ setTimeout(amcSyncFromHighlight, 0); });
-  seqInput.addEventListener('keyup',   function(){ setTimeout(amcSyncFromHighlight, 0); });
+  seqInput.addEventListener('mouseup', function(){ if (!amcMassLookupActive) setTimeout(amcSyncFromHighlight, 0); });
+  seqInput.addEventListener('keyup',   function(){ if (!amcMassLookupActive) setTimeout(amcSyncFromHighlight, 0); });
 
   /* ── Control input events ── */
   startInput.addEventListener('input',   updateFromBounds);
   endInput.addEventListener('input',     updateFromBounds);
-  cysMod.addEventListener('change',      updateFromBounds);
-  customMassEl.addEventListener('input', updateFromBounds);
-  customResEl.addEventListener('input',  updateFromBounds);
+  cysMod.addEventListener('change',      function(){ amcMassLookupActive ? amcRunMassLookup() : updateFromBounds(); });
+  customMassEl.addEventListener('input', function(){ amcMassLookupActive ? amcRunMassLookup() : updateFromBounds(); });
+  customResEl.addEventListener('input',  function(){ amcMassLookupActive ? amcRunMassLookup() : updateFromBounds(); });
+
+  /* ── Mass lookup mode ── */
+  function amcSetMassLookupActive(active) {
+    amcMassLookupActive = active;
+    massLookupPanel.style.display = active ? 'block' : 'none';
+    massLookupBtn.className = active ? 'amc-btn-green' : 'amc-btn';
+    if (!active) {
+      targetMassEl.value = '';
+      updateFromBounds();
+    }
+  }
+
+  window.amcToggleMassLookup = function() {
+    amcSetMassLookupActive(!amcMassLookupActive);
+    if (amcMassLookupActive) { targetMassEl.focus(); amcRunMassLookup(); }
+  };
+
+  window.amcUseHighlighted = function() {
+    if (amcMassLookupActive) amcSetMassLookupActive(false);
+    amcSyncFromHighlight();
+  };
+
+  function amcRunMassLookup() {
+    var targetMass = parseFloat(targetMassEl.value);
+    if (!isFinite(targetMass)) {
+      selectedDisplay.innerHTML = '<span style="color:#aab6cf;font-style:italic">Enter a target mass above to find matching subsequences.</span>';
+      statSelected.textContent = '0';
+      avgMassEl.textContent  = '—';
+      monoMassEl.textContent = '—';
+      return;
+    }
+
+    var seq = getCleanSeq();
+    if (!seq.length) {
+      selectedDisplay.innerHTML = '<span style="color:#aab6cf">No sequence loaded.</span>';
+      statSelected.textContent = '0';
+      avgMassEl.textContent  = '—';
+      monoMassEl.textContent = '—';
+      return;
+    }
+
+    var n     = seq.length;
+    var cs    = getCustomSettings(n);
+    var delta = CYS_DELTA[cs.cysteineMod] || CYS_DELTA.unmodified;
+
+    var cumAvg  = new Array(n + 1);
+    var cumMono = new Array(n + 1);
+    var cumCys  = new Array(n + 1);
+    cumAvg[0] = 0; cumMono[0] = 0; cumCys[0] = 0;
+    for (var i = 0; i < n; i++) {
+      cumAvg[i+1]  = cumAvg[i]  + (AVG_MASS[seq[i]]  || 0);
+      cumMono[i+1] = cumMono[i] + (MONO_MASS[seq[i]] || 0);
+      cumCys[i+1]  = cumCys[i]  + (seq[i] === 'C' ? 1 : 0);
+    }
+
+    var results   = [];
+    var worstDiff = Infinity;
+
+    for (var s = 0; s < n; s++) {
+      for (var e = s; e < n; e++) {
+        var cysCount  = cumCys[e+1] - cumCys[s];
+        var customAdd = (cs.hasCustomMass && cs.isResidueInRange(s + 1, e + 1)) ? cs.customMass : 0;
+        var avgM      = cumAvg[e+1] - cumAvg[s] + WATER_AVG + cysCount * delta.avg + customAdd;
+        var absDiff   = Math.abs(avgM - targetMass);
+
+        if (results.length < 10 || absDiff < worstDiff) {
+          var monoM = cumMono[e+1] - cumMono[s] + WATER_MONO + cysCount * delta.mono + customAdd;
+          results.push({ start: s+1, end: e+1, avg: avgM, mono: monoM,
+                         diff: avgM - targetMass, absDiff: absDiff, subseq: seq.slice(s, e+1) });
+          results.sort(function(a, b) { return a.absDiff - b.absDiff; });
+          if (results.length > 10) results.pop();
+          worstDiff = results[results.length - 1].absDiff;
+        }
+      }
+    }
+
+    var best = results[0];
+    statSelected.textContent = best.end - best.start + 1;
+    avgMassEl.textContent    = fmtAvg(best.avg);
+    monoMassEl.textContent   = fmtMono(best.mono);
+
+    selectedDisplay.innerHTML = results.map(function(r, idx) {
+      var sign   = r.diff >= 0 ? '+' : '';
+      var col    = r.absDiff < 0.5 ? '#8ef0c2' : (r.absDiff < 2 ? '#7cc4ff' : '#aab6cf');
+      var fmtSeq = r.subseq.match(/.{1,10}/g).join(' ');
+      return '<div class="amc-match-result" onclick="amcHighlightMatch(' + r.start + ',' + r.end + ')">' +
+        '<div class="amc-match-meta">#' + (idx + 1) + ' · res ' + r.start + '–' + r.end +
+        ' · ' + r.avg.toFixed(2) + ' Da · ' +
+        '<span style="color:' + col + '">Δ ' + sign + r.diff.toFixed(3) + ' Da</span></div>' +
+        '<div class="amc-match-seq">' + fmtSeq + '</div>' +
+        '</div>';
+    }).join('');
+  }
+
+  targetMassEl.addEventListener('input', amcRunMassLookup);
+
+  /* ── Residue → raw-textarea position map ── */
+  function buildResidueToRawMap(raw) {
+    var map = [];
+    var onNewLine = true;
+    var inHeader  = false;
+    for (var i = 0; i < raw.length; i++) {
+      var ch = raw[i];
+      if (ch === '\n' || ch === '\r') {
+        inHeader = false; onNewLine = true;
+      } else {
+        if (onNewLine && ch === '>') inHeader = true;
+        onNewLine = false;
+        if (!inHeader && AVG_MASS[ch.toUpperCase()]) map.push(i);
+      }
+    }
+    return map;
+  }
+
+  window.amcHighlightMatch = function(start, end) {
+    var map = buildResidueToRawMap(seqInput.value);
+    if (!map.length || start < 1 || end > map.length) return;
+    seqInput.focus();
+    seqInput.setSelectionRange(map[start - 1], map[end - 1] + 1);
+  };
 
   /* ── Init ── */
   updateFromBounds();
