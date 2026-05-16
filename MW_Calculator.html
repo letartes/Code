@@ -259,6 +259,23 @@
     margin-top: 6px;
   }
 
+  /* ── Clipping likelihood badges ── */
+  .amc-clip-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    border-radius: 5px;
+    padding: 1px 7px;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+  .amc-clip-high { background: rgba(142,240,194,0.12); color: #8ef0c2; border: 1px solid rgba(142,240,194,0.35); }
+  .amc-clip-med  { background: rgba(124,196,255,0.10); color: #7cc4ff; border: 1px solid rgba(124,196,255,0.30); }
+  .amc-clip-low  { background: rgba(170,182,207,0.07); color: #aab6cf; border: 1px solid rgba(170,182,207,0.20); }
+  .amc-clip-note { font-size: 10px; color: #7e8da6; margin-top: 2px; line-height: 1.5; }
+
   /* ── Mass lookup results ── */
   .amc-match-result {
     padding: 7px 8px;
@@ -811,6 +828,71 @@
     amcSyncFromHighlight();
   };
 
+  /* ── Antibody clipping pattern scorer ──
+     Scores each candidate fragment by examining whether its N- and C-terminal
+     boundaries correspond to known antibody clipping mechanisms.
+     Returns a combined score (0-6), a level label, and per-boundary annotations. */
+  function scoreClippingLikelihood(start, end, fullSeq) {
+    var n      = fullSeq.length;
+    var subseq = fullSeq.slice(start - 1, end);
+    var prevAA = start > 1 ? fullSeq[start - 2] : null;
+    var nextAA = end < n   ? fullSeq[end]        : null;
+    var firstAA = fullSeq[start - 1];
+    var lastAA  = fullSeq[end - 1];
+
+    /* N-terminal boundary */
+    var nLabel, nScore;
+    if (start === 1) {
+      nLabel = 'Natural N-term'; nScore = 3;
+    } else if (prevAA === 'D' && firstAA === 'P') {
+      nLabel = 'Asp↓Pro hydrolysis'; nScore = 3;
+    } else if (start >= 5 && firstAA === 'G' && fullSeq.slice(start - 5, start - 1) === 'ELLG') {
+      nLabel = 'IdeS hinge (ELLG↓G)'; nScore = 3;
+    } else if (prevAA === 'K') {
+      nLabel = 'Post-Lys (Lys-C/tryptic)'; nScore = 2;
+    } else if (prevAA === 'R') {
+      nLabel = 'Post-Arg (tryptic)'; nScore = 2;
+    } else {
+      nLabel = 'Non-specific'; nScore = 0;
+    }
+
+    /* C-terminal boundary */
+    var cLabel, cScore;
+    if (end === n) {
+      cLabel = 'Natural C-term'; cScore = 3;
+    } else if (lastAA === 'D' && nextAA === 'P') {
+      cLabel = 'Asp↓Pro hydrolysis'; cScore = 3;
+    } else if (nextAA === 'K' && end === n - 1) {
+      /* Fragment ends one residue before a terminal K — classic CHO carboxypeptidase clipping */
+      cLabel = 'C-term Lys clipping'; cScore = 3;
+    } else if (lastAA === 'G' && nextAA === 'G' && subseq.length >= 4 && subseq.slice(-4) === 'ELLG') {
+      cLabel = 'IdeS hinge (ELLG↓G)'; cScore = 3;
+    } else if (lastAA === 'K') {
+      cLabel = 'Lys C-term (tryptic/intact)'; cScore = 2;
+    } else if (lastAA === 'R') {
+      cLabel = 'Arg C-term (tryptic)'; cScore = 2;
+    } else {
+      cLabel = 'Non-specific'; cScore = 0;
+    }
+
+    /* Informational annotations — do not affect score */
+    var notes = [];
+    if (firstAA === 'Q') notes.push('N-term Gln → pyroGlu candidate (−17 Da)');
+    else if (firstAA === 'E') notes.push('N-term Glu → pyroGlu candidate (−18 Da)');
+    if (/DP/.test(subseq)) notes.push('Asp-Pro present (acid-labile)');
+    if (/NG|NS|NT/.test(subseq)) notes.push('Deamidation motif (NG/NS/NT)');
+
+    var total = nScore + cScore;
+    return {
+      total:      total,
+      level:      total >= 5 ? 'high'     : total >= 3 ? 'med'       : 'low',
+      levelLabel: total >= 5 ? 'Likely'   : total >= 3 ? 'Plausible' : 'Unlikely',
+      nLabel: nLabel,
+      cLabel: cLabel,
+      notes:  notes
+    };
+  }
+
   function amcRunMassLookup() {
     var targetMass = parseFloat(targetMassEl.value);
     if (!isFinite(targetMass)) {
@@ -844,7 +926,10 @@
       cumCys[i+1]  = cumCys[i]  + (seq[i] === 'C' ? 1 : 0);
     }
 
-    var results   = [];
+    /* Pass 1: collect the 30 mass-closest candidates using fast cumulative sums.
+       Scoring is deferred so the inner loop stays O(1) per fragment. */
+    var POOL = 30;
+    var pool      = [];
     var worstDiff = Infinity;
 
     for (var s = 0; s < n; s++) {
@@ -854,16 +939,28 @@
         var avgM      = cumAvg[e+1] - cumAvg[s] + WATER_AVG + cysCount * delta.avg + customAdd;
         var absDiff   = Math.abs(avgM - targetMass);
 
-        if (results.length < 10 || absDiff < worstDiff) {
+        if (pool.length < POOL || absDiff < worstDiff) {
           var monoM = cumMono[e+1] - cumMono[s] + WATER_MONO + cysCount * delta.mono + customAdd;
-          results.push({ start: s+1, end: e+1, avg: avgM, mono: monoM,
-                         diff: avgM - targetMass, absDiff: absDiff, subseq: seq.slice(s, e+1) });
-          results.sort(function(a, b) { return a.absDiff - b.absDiff; });
-          if (results.length > 10) results.pop();
-          worstDiff = results[results.length - 1].absDiff;
+          pool.push({ start: s+1, end: e+1, avg: avgM, mono: monoM,
+                      diff: avgM - targetMass, absDiff: absDiff, subseq: seq.slice(s, e+1) });
+          pool.sort(function(a, b) { return a.absDiff - b.absDiff; });
+          if (pool.length > POOL) pool.pop();
+          worstDiff = pool[pool.length - 1].absDiff;
         }
       }
     }
+
+    /* Pass 2: score clipping likelihood for each pooled candidate, then re-sort
+       by plausibility first and mass error second. Trim to the top 10 for display. */
+    pool.forEach(function(r) {
+      var clip    = scoreClippingLikelihood(r.start, r.end, seq);
+      r.clipScore = clip.total;
+    });
+    pool.sort(function(a, b) {
+      if (b.clipScore !== a.clipScore) return b.clipScore - a.clipScore;
+      return a.absDiff - b.absDiff;
+    });
+    var results = pool.slice(0, 10);
 
     var best = results[0];
     statSelected.textContent = best.end - best.start + 1;
@@ -874,10 +971,21 @@
       var sign   = r.diff >= 0 ? '+' : '';
       var col    = r.absDiff < 0.5 ? '#8ef0c2' : (r.absDiff < 2 ? '#7cc4ff' : '#aab6cf');
       var fmtSeq = r.subseq.match(/.{1,10}/g).join(' ');
+
+      var clip     = scoreClippingLikelihood(r.start, r.end, seq);
+      var badgeCls = 'amc-clip-' + clip.level;
+      var badge    = '<span class="amc-clip-badge ' + badgeCls + '">' + clip.levelLabel + '</span>';
+      var notesRow = clip.notes.length
+        ? '<div class="amc-clip-note">' + clip.notes.join(' &nbsp;&middot;&nbsp; ') + '</div>'
+        : '';
+
       return '<div class="amc-match-result" onclick="amcHighlightMatch(' + r.start + ',' + r.end + ')">' +
-        '<div class="amc-match-meta">#' + (idx + 1) + ' · res ' + r.start + '–' + r.end +
-        ' · ' + r.avg.toFixed(2) + ' Da · ' +
-        '<span style="color:' + col + '">Δ ' + sign + r.diff.toFixed(3) + ' Da</span></div>' +
+        '<div class="amc-match-meta">#' + (idx + 1) + ' &middot; res ' + r.start + '–' + r.end +
+        ' &middot; ' + r.avg.toFixed(2) + ' Da &middot; ' +
+        '<span style="color:' + col + '">Δ ' + sign + r.diff.toFixed(3) + ' Da</span>' +
+        badge + '</div>' +
+        '<div class="amc-clip-note">N: ' + clip.nLabel + ' &nbsp;&middot;&nbsp; C: ' + clip.cLabel + '</div>' +
+        notesRow +
         '<div class="amc-match-seq">' + fmtSeq + '</div>' +
         '</div>';
     }).join('');
