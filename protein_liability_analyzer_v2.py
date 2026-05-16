@@ -966,7 +966,6 @@ body {
   box-shadow: 0 1px 6px rgba(0,0,0,.08);
   text-align: center;
 }
-.card-icon  { font-size: 1.8em; margin-bottom: 6px; }
 .card-title { font-weight: 600; font-size: 0.9em; color: #555; margin-bottom: 4px; }
 .card-count { font-size: 2em; font-weight: 700; color: #1a1a2e; margin-bottom: 8px; }
 .card-bars  { display:flex; flex-wrap:wrap; gap:4px; justify-content:center; }
@@ -1332,11 +1331,8 @@ def summary_cards_html(summary: dict) -> str:
         if medium: bars += f'<span class="risk-badge risk-medium">{medium} Med</span> '
         if low:    bars += f'<span class="risk-badge risk-low">{low} Low</span> '
         if info:   bars += f'<span class="risk-badge risk-info">{info} Info</span>'
-        icon = {"Deamidation": "🧪", "Oxidation": "⚡", "Isomerization": "🔄",
-                "Glycosylation": "🍬", "Truncation": "✂️"}.get(cat, "•")
         cards.append(
             f'<div class="summary-card">'
-            f'<div class="card-icon">{icon}</div>'
             f'<div class="card-title">{cat}</div>'
             f'<div class="card-count">{total}</div>'
             f'<div class="card-bars">{bars}</div>'
@@ -1384,25 +1380,21 @@ def hos_summary_card_html(stats: dict, source: str) -> str:
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:20px">
           <div class="summary-card">
-            <div class="card-icon">🌀</div>
             <div class="card-title">α-Helix</div>
             <div class="card-count">{counts.get("H",0)}</div>
             <div style="font-size:0.82em;color:#888">{counts.get("H",0)/n*100:.1f}% of residues</div>
           </div>
           <div class="summary-card">
-            <div class="card-icon">🏹</div>
             <div class="card-title">β-Strand</div>
             <div class="card-count">{counts.get("E",0)}</div>
             <div style="font-size:0.82em;color:#888">{counts.get("E",0)/n*100:.1f}% of residues</div>
           </div>
           <div class="summary-card">
-            <div class="card-icon">🔴</div>
             <div class="card-title">Surface-Exposed</div>
             <div class="card-count">{stats["exposed"]}</div>
             <div style="font-size:0.82em;color:#888">RSA &gt; 0.25 ({exposed_pct:.1f}%)</div>
           </div>
           <div class="summary-card">
-            <div class="card-icon">🔵</div>
             <div class="card-title">Buried</div>
             <div class="card-count">{stats["buried"]}</div>
             <div style="font-size:0.82em;color:#888">RSA ≤ 0.10 ({buried_pct:.1f}%)</div>
