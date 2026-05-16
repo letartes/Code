@@ -239,7 +239,7 @@ class App:
 
         self.run_btn = tk.Button(
             run_wrap, text="Run Analysis", command=self._start,
-            bg=ACCENT, fg=WHITE, font=("Segoe UI", 13, "bold"),
+            bg=ACCENT, fg=ACCENT2, font=("Segoe UI", 13, "bold"),
             relief="flat", bd=0, padx=24, pady=14, cursor="hand2",
             activebackground=ACCENT2, activeforeground=WHITE,
         )

@@ -374,12 +374,16 @@ def find_liabilities(seq: str) -> list:
     n = len(seq)
 
     def add(liability_key: str, pos0: int, span: int, note: str = ""):
+        motif = seq[pos0: pos0 + span]
+        if span > 1:
+            motif_note = f"Motif: {motif}"
+            note = f"{motif_note}; {note}" if note else motif_note
         findings.append({
             "type": liability_key,
             "pos0": pos0,
             "span": span,
             "pos1": pos0 + 1,
-            "residues": seq[pos0: pos0 + span],
+            "residues": seq[pos0],
             "note": note,
             **{k: v for k, v in LIABILITIES[liability_key].items()
                if k not in ("description", "references", "span_length")},
