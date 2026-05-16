@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /Users/sletarte -name \"protein_liability_analyzer*.py\" 2>/dev/null | head -20)",
+      "Read(//Users/sletarte/**)",
+      "Bash(git -C /Users/sletarte/Documents/Documents/Consulting/Code show --stat 0d33765 48d0608)",
+      "Bash(git -C /Users/sletarte/Documents/Documents/Consulting/Code show 48d0608:\"sequence_liabilities HOS/protein_liability_analyzer_v2.py\")",
+      "Bash(python3 -c \"import sys; sys.path.insert\\(0, '/Users/sletarte/Documents/Documents/Consulting/Code'\\); import protein_liability_analyzer_v2; print\\('Module imported OK'\\)\")"
+    ]
+  }
+}

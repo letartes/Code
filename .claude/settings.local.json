@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python protein_liability_gui_autohos.py)",
+      "Bash(kill %1)",
+      "Bash(python protein_liability_gui_autohos.py --help)",
+      "Bash(python3 -c \"import protein_liability_gui_autohos\")",
+      "Read(//opt/homebrew/opt/**)",
+      "Read(//usr/bin/**)",
+      "Read(//opt/homebrew/bin/**)",
+      "Bash(/usr/bin/python3 -c \"import tkinter; print\\('tkinter OK:', tkinter.TkVersion\\)\")",
+      "Bash(/usr/bin/python3 -c \"import protein_liability_analyzer_v2\")",
+      "Bash(brew install *)",
+      "Bash(python3 -c \"import tkinter; print\\('tkinter OK:', tkinter.TkVersion\\)\")",
+      "Read(//Users/sletarte/Documents/**)",
+      "Read(//Users/sletarte/Downloads/**)"
+    ]
+  }
+}
