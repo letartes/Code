@@ -435,7 +435,7 @@
       <div class="amc-btn-row" style="margin-bottom:4px">
         <button class="amc-btn-blue" onclick="amcCopyAvg()">Copy average MW</button>
         <button class="amc-btn-blue" onclick="amcCopyMono()">Copy monoisotopic mass</button>
-        <button class="amc-btn-blue" onclick="amcCopyAll()">Copy both</button>
+        <button class="amc-btn-blue" onclick="amcCopyAll()">Copy all</button>
       </div>
       <div id="amc-copy-status" class="amc-copy-status"></div>
     </div>
@@ -470,6 +470,38 @@
     paired:             { avg: -1.00794,    mono: -1.0078250 }
   };
 
+  /* ── Residue atom counts (Hill order: C H N O S) ── */
+  var RESIDUE_ATOMS = {
+    A:{C:3,H:5,N:1,O:1,S:0}, R:{C:6,H:12,N:4,O:1,S:0}, N:{C:4,H:6,N:2,O:2,S:0},
+    D:{C:4,H:5,N:1,O:3,S:0}, C:{C:3,H:5,N:1,O:1,S:1},  E:{C:5,H:7,N:1,O:3,S:0},
+    Q:{C:5,H:8,N:2,O:2,S:0}, G:{C:2,H:3,N:1,O:1,S:0},  H:{C:6,H:7,N:3,O:1,S:0},
+    I:{C:6,H:11,N:1,O:1,S:0},L:{C:6,H:11,N:1,O:1,S:0}, K:{C:6,H:12,N:2,O:1,S:0},
+    M:{C:5,H:9,N:1,O:1,S:1}, F:{C:9,H:9,N:1,O:1,S:0},  P:{C:5,H:7,N:1,O:1,S:0},
+    S:{C:3,H:5,N:1,O:2,S:0}, T:{C:4,H:7,N:1,O:2,S:0},  W:{C:11,H:10,N:2,O:1,S:0},
+    Y:{C:9,H:9,N:1,O:2,S:0}, V:{C:5,H:9,N:1,O:1,S:0}
+  };
+  /* Net atom change per Cys for each modification */
+  var CYS_ATOMS_DELTA = {
+    unmodified:          {C:0, H:0,  N:0, O:0, S:0},
+    carbamidomethylated: {C:2, H:3,  N:1, O:1, S:0},
+    carboxymethylated:   {C:2, H:2,  N:0, O:2, S:0},
+    paired:              {C:0, H:-1, N:0, O:0, S:0}
+  };
+
+  function calcFormula(seq, cysMod) {
+    var a = {C:0, H:2, N:0, O:1, S:0}; // start with terminal H2O
+    var cd = CYS_ATOMS_DELTA[cysMod] || CYS_ATOMS_DELTA.unmodified;
+    for (var i = 0; i < seq.length; i++) {
+      var r = RESIDUE_ATOMS[seq[i]];
+      if (!r) continue;
+      a.C += r.C; a.H += r.H; a.N += r.N; a.O += r.O; a.S += r.S;
+      if (seq[i] === 'C') { a.C += cd.C; a.H += cd.H; a.N += cd.N; a.O += cd.O; a.S += cd.S; }
+    }
+    return ['C','H','N','O','S'].filter(function(el){ return a[el] !== 0; })
+      .map(function(el){ return el + (Math.abs(a[el]) !== 1 ? a[el] : (a[el] < 0 ? -1 : '')); })
+      .join('');
+  }
+
   /* ── DOM refs ── */
   var seqInput        = document.getElementById('amc-seq');
   var fastaFile       = document.getElementById('amc-fasta-file');
@@ -489,6 +521,7 @@
   var massLookupBtn   = document.getElementById('amc-mass-lookup-btn');
   var targetMassEl    = document.getElementById('amc-target-mass');
   var amcMassLookupActive = false;
+  var currentSubseq = '';
 
   /* ── Sequence sanitizer ── */
   function sanitizeSequence(raw) {
@@ -608,6 +641,7 @@
       applyCustomMass: cs.hasCustomMass && cs.isResidueInRange(bounds.start, bounds.end)
     });
 
+    currentSubseq = subseq;
     selectedDisplay.textContent = subseq
       ? subseq.match(/.{1,10}/g).join(' ')
       : '—';
@@ -748,14 +782,15 @@
     copyText(v.toFixed(5), 'Monoisotopic mass copied.');
   };
   window.amcCopyAll = function() {
-    var seqTxt = selectedDisplay.textContent === '—' ? '' : selectedDisplay.textContent.replace(/ /g, '');
-    if (!seqTxt) return;
+    if (!currentSubseq) return;
+    var formula = calcFormula(currentSubseq, cysMod.value || 'unmodified');
     var text = [
-      'Selected sequence: ' + seqTxt,
+      'Selected sequence: ' + currentSubseq,
+      'Molecular formula: ' + formula,
       'Average molecular weight: ' + avgMassEl.textContent,
       'Monoisotopic mass: ' + monoMassEl.textContent
     ].join('\n');
-    copyText(text, 'Selected sequence and masses copied.');
+    copyText(text, 'Sequence, formula, and masses copied.');
   };
 
   /* ── FASTA file import ── */
@@ -958,6 +993,7 @@
     var results = pool.slice(0, 10);
 
     var best = results[0];
+    currentSubseq = best.subseq;
     statSelected.textContent = best.end - best.start + 1;
     avgMassEl.textContent    = fmtAvg(best.avg);
     monoMassEl.textContent   = fmtMono(best.mono);
