@@ -363,8 +363,8 @@
 
       <div class="amc-btn-row" style="margin-bottom:14px">
         <button class="amc-btn-blue" onclick="amcSelectAll()">Select full sequence</button>
-        <button class="amc-btn" onclick="amcUseHighlighted()">Use highlighted text</button>
-        <button class="amc-btn" id="amc-mass-lookup-btn" onclick="amcToggleMassLookup()">Specify mass</button>
+        <button class="amc-btn-blue" onclick="amcUseHighlighted()">Use highlighted text</button>
+        <button class="amc-btn-blue" id="amc-mass-lookup-btn" onclick="amcToggleMassLookup()">Specify mass</button>
       </div>
 
       <div id="amc-mass-lookup-panel" style="display:none;margin-bottom:14px">
@@ -433,15 +433,10 @@
 
       <!-- Copy buttons -->
       <div class="amc-btn-row" style="margin-bottom:4px">
-        <button class="amc-btn-blue"  onclick="amcCopyAvg()">Copy average MW</button>
-        <button class="amc-btn-green" onclick="amcCopyMono()">Copy monoisotopic mass</button>
+        <button class="amc-btn-blue" onclick="amcCopyAvg()">Copy average MW</button>
+        <button class="amc-btn-blue" onclick="amcCopyMono()">Copy monoisotopic mass</button>
+        <button class="amc-btn-blue" onclick="amcCopyAll()">Copy both</button>
       </div>
-      <div class="amc-btn-row" style="margin-bottom:4px">
-        <button class="amc-btn-blue" style="flex:1;justify-content:center" onclick="amcCopyAll()">
-          Copy both (sequence + masses)
-        </button>
-      </div>
-
       <div id="amc-copy-status" class="amc-copy-status"></div>
     </div>
 
@@ -743,14 +738,14 @@
   }
 
   window.amcCopyAvg = function() {
-    var v = avgMassEl.textContent;
-    if (v === '—') return;
-    copyText(v, 'Average molecular weight copied.');
+    var v = parseFloat(avgMassEl.textContent);
+    if (!isFinite(v)) return;
+    copyText(v.toFixed(2), 'Average molecular weight copied.');
   };
   window.amcCopyMono = function() {
-    var v = monoMassEl.textContent;
-    if (v === '—') return;
-    copyText(v, 'Monoisotopic mass copied.');
+    var v = parseFloat(monoMassEl.textContent);
+    if (!isFinite(v)) return;
+    copyText(v.toFixed(5), 'Monoisotopic mass copied.');
   };
   window.amcCopyAll = function() {
     var seqTxt = selectedDisplay.textContent === '—' ? '' : selectedDisplay.textContent.replace(/ /g, '');
@@ -811,7 +806,7 @@
   function amcSetMassLookupActive(active) {
     amcMassLookupActive = active;
     massLookupPanel.style.display = active ? 'block' : 'none';
-    massLookupBtn.className = active ? 'amc-btn-green' : 'amc-btn';
+    massLookupBtn.className = active ? 'amc-btn-green' : 'amc-btn-blue';
     if (!active) {
       targetMassEl.value = '';
       updateFromBounds();
