@@ -16,6 +16,7 @@ Requires protein_liability_analyzer_v2.py in the same folder.
 All computation is local - sequences never transmitted.
 """
 
+import re
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import threading
@@ -183,7 +184,7 @@ class App:
         logo.create_line(pad + r, pad, W - pad - r, pad, fill=WHITE, width=lw)
         logo.create_line(pad + r, H - pad, W - pad - r, H - pad, fill=WHITE, width=lw)
         logo.create_text(W // 2, H // 2, text="LSC", fill=WHITE,
-                         font=("Arial", 17, "bold"))
+                         font=("Futura", 17, "bold"))
 
         text_frame = tk.Frame(inner, bg=DARK)
         text_frame.pack(side="left")
@@ -599,7 +600,10 @@ class App:
 
                 category  = f.get("category", "")
                 risk_key  = f.get("risk", "info").lower()
-                base_lbl  = f.get("label", f.get("type", ""))
+                base_lbl  = re.sub(
+                    r'\s*[–—-]\s*(High|Medium|Low|Info)\s*Risk\s*',
+                    ' ', f.get("label", f.get("type", ""))
+                ).strip()
                 cdr_name  = cdr_at.get(pos0)
                 type_lbl  = f"{base_lbl} · {cdr_name}" if cdr_name else base_lbl
                 note      = f.get("note", "") or ""

@@ -1788,7 +1788,7 @@ def build_html_report(sequences: list, title: str = "Protein Sequence Liability 
 <div class="page-wrap">
 
   <div class="report-header">
-    <h1><svg width="80" height="40" viewBox="0 0 80 40" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle;margin-right:14px;flex-shrink:0"><rect x="2" y="2" width="76" height="36" rx="18" ry="18" fill="none" stroke="rgba(255,255,255,0.88)" stroke-width="3"/><text x="40" y="27" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="19" font-weight="900" fill="rgba(255,255,255,0.92)" letter-spacing="1">LSC</text></svg>{title}</h1>
+    <h1><svg width="80" height="40" viewBox="0 0 80 40" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle;margin-right:14px;flex-shrink:0"><rect x="2" y="2" width="76" height="36" rx="18" ry="18" fill="none" stroke="rgba(255,255,255,0.88)" stroke-width="3"/><text x="40" y="27" text-anchor="middle" font-family="Futura,'Century Gothic','Trebuchet MS',sans-serif" font-size="19" font-weight="700" fill="rgba(255,255,255,0.92)" letter-spacing="1">LSC</text></svg>{title}</h1>
     <div class="subtitle">
       Post-translational modification risk &amp; sequence liability assessment
       {'— with Higher-Order Structure Analysis' if any(e.get('ss') is not None for e in sequences) else ''}
