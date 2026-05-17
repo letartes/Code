@@ -2072,7 +2072,8 @@ def run_structure_analysis_pdb(pdb_text: str, seq: str,
     atoms = parse_pdb_atoms(pdb_text, chain_id=chain_id)
     if not atoms:
         print("  [Warning] No ATOM records found in PDB. Falling back to sequence prediction.")
-        return run_structure_analysis_sequence(seq, verbose)
+        ss, rsa, src = run_structure_analysis_sequence(seq, verbose)
+        return ss, rsa, src, {}
     if verbose:
         print(f"done  ({len(atoms)} heavy atoms)")
 
@@ -2087,7 +2088,8 @@ def run_structure_analysis_pdb(pdb_text: str, seq: str,
             f"  [Warning] Low sequence match ({match_pct:.1f}%).  "
             "Check --chain argument.  Falling back to sequence-based prediction."
         )
-        return run_structure_analysis_sequence(seq, verbose)
+        ss, rsa, src = run_structure_analysis_sequence(seq, verbose)
+        return ss, rsa, src, {}
 
     # Secondary structure from HELIX/SHEET records
     if verbose:
@@ -2129,7 +2131,7 @@ def run_structure_analysis_pdb(pdb_text: str, seq: str,
         f"PDB structure — HELIX/SHEET records (secondary structure) + "
         f"Shrake-Rupley SASA, probe=1.4 Å (solvent exposure)"
     )
-    return ss, rsa, source
+    return ss, rsa, source, seq_to_pdb
 
 
 def process_sequences(pairs: list, pdb_text: Optional[str] = None,
