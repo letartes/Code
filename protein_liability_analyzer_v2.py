@@ -712,8 +712,8 @@ def map_pdb_to_sequence(pdb_residues: list, seq: str, chain_id: Optional[str] = 
     best_offset = 0
     best_score  = -1
 
-    # Try every start offset within ±50 residues
-    for offset in range(-50, 51):
+    # Try every possible offset so multi-chain PDBs don't miss the right chain
+    for offset in range(-len(seq) + 1, len(pdb_seq)):
         score = 0
         for i, aa in enumerate(seq):
             pdb_i = i + offset
