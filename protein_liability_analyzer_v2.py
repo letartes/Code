@@ -584,6 +584,122 @@ def predict_rsa_from_sequence(seq: str, ss: list) -> list:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 6b. CDR ANNOTATION  (anchor-based, no external alignment tool required)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# CDR start/end offsets (0-based, half-open) relative to the two structural
+# cysteines.  cdr1 and cdr2 are expressed as (offset_from_c1_start,
+# offset_from_c1_end); cdr3 always starts at c2+1 and ends at FR4 start.
+_CDR_OFFSETS: dict = {
+    "H": {
+        "kabat":   {"cdr1": ( 9, 14), "cdr2": (28, 44)},
+        "chothia": {"cdr1": ( 4, 11), "cdr2": (30, 35)},
+        "imgt":    {"cdr1": ( 5, 17), "cdr2": (33, 44)},
+    },
+    "L": {
+        "kabat":   {"cdr1": ( 1, 12), "cdr2": (27, 34)},
+        "chothia": {"cdr1": ( 1, 12), "cdr2": (27, 34)},
+        "imgt":    {"cdr1": ( 4, 16), "cdr2": (33, 44)},
+    },
+}
+
+# FR4 motifs used as CDR3 end anchors
+_VH_FR4 = re.compile(r'W[GASVT][QKRSE][GSA]')   # e.g. WGQG, WGAG, WSQG
+_VL_FR4 = re.compile(r'F[GASVT][QSG][GT]')        # e.g. FGQG, FGSG, FGTG
+
+# CDR colours for HTML display
+CDR_COLORS: dict = {
+    "CDR-H1": ("#cce5ff", "#004085"),
+    "CDR-H2": ("#fff3cd", "#856404"),
+    "CDR-H3": ("#f8d7da", "#721c24"),
+    "CDR-L1": ("#d4edda", "#155724"),
+    "CDR-L2": ("#fff3cd", "#856404"),
+    "CDR-L3": ("#f8d7da", "#721c24"),
+}
+
+CDR_SCHEME_LABELS: dict = {
+    "kabat":   "Kabat",
+    "chothia": "Chothia",
+    "imgt":    "IMGT",
+}
+
+
+def annotate_cdrs(seq: str, scheme: str = "kabat") -> list:
+    """
+    Identify CDR regions in an antibody variable domain sequence.
+
+    Uses the two conserved structural cysteines as anchors (Kabat C22/C92 for
+    VH, C23/C88 for VL) together with the FR4 motif (WGXG / FGXG) to locate
+    CDR boundaries without requiring external alignment.
+
+    Returns: list of (start, end, name) tuples — 0-based, end exclusive.
+             name is e.g. 'CDR-H1', 'CDR-L3'.
+             Returns [] if the sequence does not look like an antibody V domain.
+    """
+    seq    = seq.upper()
+    n      = len(seq)
+    scheme = scheme.lower()
+    if scheme not in ("kabat", "chothia", "imgt"):
+        scheme = "kabat"
+
+    # ── Find the conserved disulfide Cys pair ─────────────────────────────────
+    cys_pos = [i for i, aa in enumerate(seq) if aa == "C"]
+    c1 = c2 = None
+    for i in range(len(cys_pos)):
+        for j in range(i + 1, len(cys_pos)):
+            dist = cys_pos[j] - cys_pos[i]
+            if 55 <= dist <= 82:          # VH ~70, VL ~65 residues apart
+                c1, c2 = cys_pos[i], cys_pos[j]
+                break
+        if c1 is not None:
+            break
+    if c1 is None:
+        return []
+
+    # ── Identify chain type via FR4 motif ────────────────────────────────────
+    tail   = seq[c2:]
+    vh_m   = _VH_FR4.search(tail)
+    vl_m   = _VL_FR4.search(tail)
+
+    if vh_m and (not vl_m or vh_m.start() <= vl_m.start()):
+        chain   = "H"
+        fr4_pos = c2 + vh_m.start()
+    elif vl_m:
+        chain   = "L"
+        fr4_pos = c2 + vl_m.start()
+    else:
+        return []   # cannot determine chain type
+
+    # ── CDR positions ─────────────────────────────────────────────────────────
+    o      = _CDR_OFFSETS[chain][scheme]
+    cdr1_s = max(0, c1 + o["cdr1"][0])
+    cdr1_e = min(n, c1 + o["cdr1"][1])
+    cdr2_s = max(0, c1 + o["cdr2"][0])
+    cdr2_e = min(n, c1 + o["cdr2"][1])
+    cdr3_s = max(0, c2 + 1)
+    cdr3_e = min(n, fr4_pos)
+
+    cdrs = []
+    for s, e, name in [
+        (cdr1_s, cdr1_e, f"CDR-{chain}1"),
+        (cdr2_s, cdr2_e, f"CDR-{chain}2"),
+        (cdr3_s, cdr3_e, f"CDR-{chain}3"),
+    ]:
+        if s < e:
+            cdrs.append((s, e, name))
+    return cdrs
+
+
+def cdr_map(cdrs: list, n: int) -> list:
+    """Return a per-position CDR name list (None if not in any CDR)."""
+    mapping = [None] * n
+    for s, e, name in cdrs:
+        for i in range(s, e):
+            mapping[i] = name
+    return mapping
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 7. PDB PARSING
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1129,6 +1245,13 @@ th.sort-desc::after { content: ' ↓'; font-size: 0.78em; opacity: 0.7; }
   body { background: #fff; }
   .section { box-shadow: none; border: 1px solid #ddd; }
 }
+
+/* CDR legend strip */
+.cdr-legend { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;
+              font-size:0.82em; align-items:center; }
+.cdr-legend-item { display:flex; align-items:center; gap:5px; }
+.cdr-swatch { display:inline-block; width:14px; height:14px; border-radius:3px;
+              border:1px solid rgba(0,0,0,.15); }
 """
 
 SS_COLORS = {
@@ -1159,9 +1282,11 @@ def _rsa_color(rsa: float) -> str:
 def build_annotated_sequence(seq: str, findings: list,
                               ss: Optional[list] = None,
                               rsa: Optional[list] = None,
+                              cdrs: Optional[list] = None,
                               wrap: int = 60) -> str:
     """
     Build the HTML annotated-sequence block.
+    Residues are colour-coded by CDR membership (if cdrs provided).
     When ss/rsa are provided, adds two extra tracks below each sequence line:
       - Secondary-structure colour track (H/E/T/C)
       - RSA heatmap track (blue=buried → red=exposed)
@@ -1169,38 +1294,56 @@ def build_annotated_sequence(seq: str, findings: list,
     n = len(seq)
     has_struct = ss is not None and rsa is not None
 
-    # Build per-position liability mapping
+    # Per-position CDR name (None = framework)
+    cdr_pos = cdr_map(cdrs, n) if cdrs else [None] * n
+
+    # Per-position liability tooltip (not used for colour anymore)
     pos_findings = [[] for _ in range(n)]
     for f in findings:
         for j in range(f["pos0"], min(f["pos0"] + f["span"], n)):
             pos_findings[j].append(f)
 
     def best_finding(flist):
-        if not flist:
-            return None
-        return min(flist, key=lambda f: RISK_ORDER.get(f["risk"], 9))
+        return min(flist, key=lambda f: RISK_ORDER.get(f["risk"], 9)) if flist else None
 
     # Build HTML spans for each residue
     html_chars = []
     for i, aa in enumerate(seq):
-        flist = pos_findings[i]
-        if not flist:
-            html_chars.append(f'<span class="aa">{aa}</span>')
-        else:
-            bf    = best_finding(flist)
-            types = " | ".join(sorted({f["short"] for f in flist}))
+        cdr_name = cdr_pos[i]
+        flist    = pos_findings[i]
+        bf       = best_finding(flist)
+
+        # Tooltip: liability info takes priority; CDR label appended if present
+        parts = []
+        if flist:
+            parts.append(" | ".join(sorted({f["short"] for f in flist})))
             notes = "; ".join(filter(None, [f.get("note", "") for f in flist]))
-            title = f"Pos {i+1}: {types}"
             if notes:
-                title += f" — {notes}"
+                parts.append(notes)
+        if cdr_name:
+            parts.append(cdr_name)
+        title = f"Pos {i+1}" + (": " + " — ".join(parts) if parts else "")
+
+        # Background: CDR colour if in CDR, else plain
+        if cdr_name:
+            bg, fg = CDR_COLORS.get(cdr_name, ("#e8e8e8", "#333"))
+            # Underline if also a liability
+            border = f"border-bottom:2px solid {bf['color_border']};" if bf else ""
+            style  = f"background:{bg};color:{fg};{border}"
+            html_chars.append(
+                f'<span class="aa" style="{style}" title="{title}">{aa}</span>'
+            )
+        elif bf:
+            # Liability outside CDR: subtle underline only, no background fill
             style = (
-                f"background:{bf['color_bg']};"
+                f"border-bottom:3px solid {bf['color_border']};"
                 f"color:{bf['color_text']};"
-                f"border-bottom:2px solid {bf['color_border']};"
             )
             html_chars.append(
                 f'<span class="aa liability" style="{style}" title="{title}">{aa}</span>'
             )
+        else:
+            html_chars.append(f'<span class="aa" title="{title}">{aa}</span>')
 
     lines_html = []
     for start in range(0, n, wrap):
@@ -1273,9 +1416,17 @@ def liability_legend_html() -> str:
     return "\n".join(rows)
 
 
-def findings_table_html(findings: list, has_structure: bool = False, table_id: str = "liab-tbl-0") -> str:
+def findings_table_html(findings: list, has_structure: bool = False,
+                        table_id: str = "liab-tbl-0",
+                        cdrs: Optional[list] = None) -> str:
     if not findings:
         return "<p><em>No liabilities found.</em></p>"
+
+    # Build CDR membership set: pos0 → CDR name
+    cdr_at: dict = {}
+    for s, e, name in (cdrs or []):
+        for i in range(s, e):
+            cdr_at[i] = name
 
     sorted_f = sorted(findings, key=lambda f: (RISK_ORDER.get(f["risk"], 9), f["pos0"]))
 
@@ -1334,26 +1485,51 @@ def findings_table_html(findings: list, has_structure: bool = False, table_id: s
                 f'<td style="font-size:0.80em;color:#666">{exp_note}</td>'
             )
 
+        # CDR membership
+        cdr_name = cdr_at.get(f["pos0"])
+        if cdr_name:
+            bg, fg = CDR_COLORS.get(cdr_name, ("#e8e8e8", "#333"))
+            cdr_cell = (
+                f'<td><span style="background:{bg};color:{fg};padding:2px 8px;'
+                f'border-radius:3px;font-size:0.82em;font-weight:600;white-space:nowrap">'
+                f'{cdr_name}</span></td>'
+            )
+            cdr_data = f"data-cdr='{cdr_name}'"
+        else:
+            cdr_cell = "<td style='color:#aaa;font-size:0.82em'>FR</td>"
+            cdr_data = "data-cdr='fr'"
+
         risk_order = RISK_ORDER.get(f["risk"], 9)
         rows.append(
-            f"<tr data-risk='{f['risk']}' data-risk-order='{risk_order}' data-pos='{f['pos1']}'>"
+            f"<tr data-risk='{f['risk']}' data-risk-order='{risk_order}' "
+            f"data-pos='{f['pos1']}' {cdr_data}>"
             f"<td class='pos-cell'>{f['pos1']}</td>"
             f"<td>{res_span}</td>"
             f"<td>{f['category']}</td>"
             f"<td>{risk_badge}</td>"
             f"<td style='font-size:0.88em'>{f['label']}</td>"
             f"<td style='font-size:0.82em;color:#555'>{note}</td>"
+            f"{cdr_cell}"
             f"{struct_cols}"
             f"</tr>"
         )
 
+    # Column indices shift +1 after CDR col is inserted at position 6
     struct_th = ""
     if has_structure:
         struct_th = (
-            "<th class='sortable' data-col='6' data-type='str'>Sec. Structure</th>"
-            "<th class='sortable' data-col='7' data-type='num'>RSA</th>"
+            "<th class='sortable' data-col='7' data-type='str'>Sec. Structure</th>"
+            "<th class='sortable' data-col='8' data-type='num'>RSA</th>"
             "<th>Exposure</th>"
             "<th>Structural Note</th>"
+        )
+
+    has_cdrs = bool(cdr_at)
+    cdr_filter_opts = ""
+    if has_cdrs:
+        cdr_names = sorted({v for v in cdr_at.values()})
+        cdr_filter_opts = "".join(
+            f'<option value="{c}">{c}</option>' for c in cdr_names
         )
 
     return f"""
@@ -1367,6 +1543,11 @@ def findings_table_html(findings: list, has_structure: bool = False, table_id: s
     <option value="low">Low</option>
     <option value="info">Info</option>
   </select>
+  {'<select class="tbl-cdr-filter" onchange="tblFilter(\'' + table_id + '\')">'
+    '<option value="">All regions</option>'
+    '<option value="fr">FR only</option>'
+    + cdr_filter_opts +
+   '</select>' if has_cdrs else ''}
   <span class="tbl-count" id="count-{table_id}"></span>
 </div>
 <div style="overflow-x:auto">
@@ -1379,6 +1560,7 @@ def findings_table_html(findings: list, has_structure: bool = False, table_id: s
         <th class="sortable" data-col="3" data-type="risk">Risk</th>
         <th>Type</th>
         <th>Note</th>
+        <th class="sortable" data-col="6" data-type="str">Region</th>
         {struct_th}
       </tr>
     </thead>
@@ -1499,12 +1681,14 @@ def hos_summary_card_html(stats: dict, source: str) -> str:
 
 
 def build_html_report(sequences: list, title: str = "Protein Sequence Liability Analysis",
-                       generated_by: str = "Protein Liability Analyzer v2") -> str:
+                       generated_by: str = "Protein Liability Analyzer v2",
+                       cdr_scheme: str = "kabat") -> str:
     """
     Build the full HTML report.
     sequences: list of dicts with keys:
       name, seq, findings, summary, ss (optional), rsa (optional),
       hos_stats (optional), hos_source (optional)
+    cdr_scheme: 'kabat', 'chothia', or 'imgt'
     """
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     seq_sections = []
@@ -1518,9 +1702,11 @@ def build_html_report(sequences: list, title: str = "Protein Sequence Liability 
         rsa        = entry.get("rsa")
         has_struct = ss is not None and rsa is not None
 
-        annotated    = build_annotated_sequence(seq, findings, ss=ss, rsa=rsa)
-        table_block  = findings_table_html(findings, has_structure=has_struct,
-                                           table_id=f"liab-tbl-{seq_idx}")
+        cdrs      = annotate_cdrs(seq, scheme=cdr_scheme)
+        annotated = build_annotated_sequence(seq, findings, ss=ss, rsa=rsa, cdrs=cdrs)
+        table_block = findings_table_html(findings, has_structure=has_struct,
+                                          table_id=f"liab-tbl-{seq_idx}",
+                                          cdrs=cdrs)
         cards      = summary_cards_html(summary)
         total      = summary["total"]
         high_ct    = len(summary["by_risk"].get("high", []))
@@ -1558,13 +1744,23 @@ def build_html_report(sequences: list, title: str = "Protein Sequence Liability 
             </div>
 
             <div style="margin-bottom:24px">
-              <div style="font-weight:600;margin-bottom:10px;color:#1a1a2e">
+              <div style="font-weight:600;margin-bottom:6px;color:#1a1a2e">
                 Annotated Sequence
                 <span style="font-weight:400;font-size:0.8em;color:#888;margin-left:8px">
-                  (hover residues for details)
+                  CDR numbering: {CDR_SCHEME_LABELS.get(cdr_scheme, cdr_scheme)} &nbsp;·&nbsp; hover residues for details
                 </span>
               </div>
-              {('<div style="font-size:0.8em;color:#666;margin-bottom:8px">Row 1: sequence with liability highlights &nbsp;|&nbsp; Row 2: secondary structure &nbsp;|&nbsp; Row 3: RSA heatmap</div>') if has_struct else ''}
+              {f'<div class="cdr-legend">' + "".join(
+                  f'<span class="cdr-legend-item">'
+                  f'<span class="cdr-swatch" style="background:{CDR_COLORS[n][0]};border-color:{CDR_COLORS[n][1]}40"></span>'
+                  f'{n}</span>'
+                  for s, e, n in cdrs
+              ) + (
+                  '<span class="cdr-legend-item" style="color:#888">'
+                  '<span style="display:inline-block;width:20px;height:3px;background:#999;border-radius:2px;vertical-align:middle;margin-right:4px"></span>'
+                  'Liability (underline)</span>'
+              ) + '</div>' if cdrs else ''}
+              {('<div style="font-size:0.8em;color:#666;margin-bottom:6px">Row 1: CDR-annotated sequence &nbsp;|&nbsp; Row 2: secondary structure &nbsp;|&nbsp; Row 3: RSA heatmap</div>') if has_struct else ''}
               <div class="seq-block">{annotated}</div>
             </div>
 
@@ -1592,7 +1788,7 @@ def build_html_report(sequences: list, title: str = "Protein Sequence Liability 
 <div class="page-wrap">
 
   <div class="report-header">
-    <h1>🔬 {title}</h1>
+    <h1><svg width="80" height="40" viewBox="0 0 80 40" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle;margin-right:14px;flex-shrink:0"><rect x="2" y="2" width="76" height="36" rx="18" ry="18" fill="none" stroke="rgba(255,255,255,0.88)" stroke-width="3"/><text x="40" y="27" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="19" font-weight="900" fill="rgba(255,255,255,0.92)" letter-spacing="1">LSC</text></svg>{title}</h1>
     <div class="subtitle">
       Post-translational modification risk &amp; sequence liability assessment
       {'— with Higher-Order Structure Analysis' if any(e.get('ss') is not None for e in sequences) else ''}
@@ -1677,13 +1873,16 @@ def build_html_report(sequences: list, title: str = "Protein Sequence Liability 
   }};
 
   window.tblFilter = function (tableId) {{
-    const ctrl  = document.getElementById("ctrl-" + tableId);
-    const query = ctrl.querySelector(".tbl-search").value.toLowerCase();
-    const risk  = ctrl.querySelector(".tbl-risk-filter").value;
+    const ctrl    = document.getElementById("ctrl-" + tableId);
+    const query   = ctrl.querySelector(".tbl-search").value.toLowerCase();
+    const risk    = ctrl.querySelector(".tbl-risk-filter").value;
+    const cdrSel  = ctrl.querySelector(".tbl-cdr-filter");
+    const cdrVal  = cdrSel ? cdrSel.value : "";
     document.getElementById(tableId).querySelectorAll("tbody tr").forEach(row => {{
-      const match = (!query || row.textContent.toLowerCase().includes(query))
-                 && (!risk  || row.dataset.risk === risk);
-      row.style.display = match ? "" : "none";
+      const matchQ   = !query  || row.textContent.toLowerCase().includes(query);
+      const matchR   = !risk   || row.dataset.risk === risk;
+      const matchCDR = !cdrVal || row.dataset.cdr  === cdrVal;
+      row.style.display = (matchQ && matchR && matchCDR) ? "" : "none";
     }});
     updateCount(tableId);
   }};

@@ -98,6 +98,7 @@ class App:
         self.v_outname  = tk.StringVar(value="protein_liabilities")
         self.v_nohtml   = tk.BooleanVar(value=False)
         self.v_seqlen   = tk.StringVar(value="")
+        self.v_cdr_scheme = tk.StringVar(value="kabat")
         self.v_status   = tk.StringVar(value="Ready")
 
         # Report filter state
@@ -170,9 +171,25 @@ class App:
         hdr.pack_propagate(False)
         inner = tk.Frame(hdr, bg=DARK)
         inner.pack(fill="both", expand=True, padx=20, pady=10)
-        tk.Label(inner, text="Protein Liability Analyzer  v2  -  Auto-HOS",
+
+        # LSC logo drawn with Canvas primitives (no image dependency)
+        lw, W, H, r, pad = 2, 74, 42, 19, 2
+        logo = tk.Canvas(inner, width=W, height=H, bg=DARK, highlightthickness=0)
+        logo.pack(side="left", padx=(0, 16))
+        logo.create_arc(pad, pad, pad + 2*r, H - pad,
+                        start=90, extent=180, style="arc", outline=WHITE, width=lw)
+        logo.create_arc(W - pad - 2*r, pad, W - pad, H - pad,
+                        start=-90, extent=180, style="arc", outline=WHITE, width=lw)
+        logo.create_line(pad + r, pad, W - pad - r, pad, fill=WHITE, width=lw)
+        logo.create_line(pad + r, H - pad, W - pad - r, H - pad, fill=WHITE, width=lw)
+        logo.create_text(W // 2, H // 2, text="LSC", fill=WHITE,
+                         font=("Arial", 17, "bold"))
+
+        text_frame = tk.Frame(inner, bg=DARK)
+        text_frame.pack(side="left")
+        tk.Label(text_frame, text="Protein Liability Analyzer  v2  -  Auto-HOS",
                  bg=DARK, fg=WHITE, font=F_TITLE).pack(anchor="w")
-        tk.Label(inner,
+        tk.Label(text_frame,
                  text="HOS always performed  ·  Letarte Scientific Consulting  ·  "
                       "All computation local - sequences never transmitted",
                  bg=DARK, fg="#7788aa", font=("Segoe UI", 8)).pack(anchor="w")
@@ -321,8 +338,20 @@ class App:
         tk.Label(ch_row, text="  Leave blank for automatic selection",
                  bg=WHITE, fg=GREY, font=F_SMALL).pack(side="left")
 
+        cdr_row = tk.Frame(p, bg=WHITE)
+        cdr_row.pack(fill="x", pady=(6, 2))
+        tk.Label(cdr_row, text="CDR scheme:", bg=WHITE, fg=DARK, font=F_BODY,
+                 width=13, anchor="w").pack(side="left")
+        for scheme, label in [("kabat", "Kabat"), ("chothia", "Chothia"), ("imgt", "IMGT")]:
+            tk.Radiobutton(
+                cdr_row, text=label, variable=self.v_cdr_scheme, value=scheme,
+                bg=WHITE, fg=DARK, font=F_BODY, activebackground=WHITE,
+            ).pack(side="left", padx=(0, 16))
+        tk.Label(cdr_row, text="(antibody V-domain sequences only)",
+                 bg=WHITE, fg=GREY, font=F_SMALL).pack(side="left")
+
         info = tk.Frame(p, bg="#e8f4fd")
-        info.pack(fill="x")
+        info.pack(fill="x", pady=(6, 0))
         tk.Label(info,
                  text="Supplying a PDB file upgrades the analysis from theoretical "
                       "(sequence-based) to experimental (structure-based) mode. "
@@ -543,9 +572,18 @@ class App:
         self._rpt_all_rows = []
         categories_seen = set()
 
+        cdr_scheme = self.v_cdr_scheme.get()
+
         for entry in results:
             name = entry["name"]
             seq  = entry["seq"]
+
+            # Build per-position CDR map for this chain
+            cdrs      = pla.annotate_cdrs(seq, scheme=cdr_scheme)
+            cdr_at    = {}
+            for s, e, cdr_name in cdrs:
+                for i in range(s, e):
+                    cdr_at[i] = cdr_name
 
             for f in entry["findings"]:
                 pos0  = f.get("pos0", 0)
@@ -561,7 +599,9 @@ class App:
 
                 category  = f.get("category", "")
                 risk_key  = f.get("risk", "info").lower()
-                type_lbl  = f.get("label", f.get("type", ""))
+                base_lbl  = f.get("label", f.get("type", ""))
+                cdr_name  = cdr_at.get(pos0)
+                type_lbl  = f"{base_lbl} · {cdr_name}" if cdr_name else base_lbl
                 note      = f.get("note", "") or ""
 
                 categories_seen.add(category)
@@ -938,7 +978,9 @@ class App:
                 title     = ("Protein Sequence Liability Analysis + PDB Structure"
                              if pdb_text else
                              "Protein Sequence Liability Analysis + HOS Prediction")
-                html_content = pla.build_html_report(results, title=title)
+                html_content = pla.build_html_report(
+                    results, title=title,
+                    cdr_scheme=self.v_cdr_scheme.get())
                 html_path.write_text(html_content, encoding="utf-8")
                 q.put(("green", f"\n  Report saved -> {html_path}\n"))
 
