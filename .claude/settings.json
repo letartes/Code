@@ -11,7 +11,8 @@
       "Bash(command -v create-dmg)",
       "Bash(chmod +x /Users/sletarte/Documents/Documents/Consulting/Code/build/build_mac.sh)",
       "Bash(python3 -m PyInstaller --clean protein_liability.spec)",
-      "Bash(python3 -m PyInstaller --clean -y protein_liability.spec)"
+      "Bash(python3 -m PyInstaller --clean -y protein_liability.spec)",
+      "Bash(git push *)"
     ]
   }
 }
