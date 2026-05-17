@@ -1507,7 +1507,7 @@ def findings_table_html(findings: list, has_structure: bool = False,
             f"<td>{res_span}</td>"
             f"<td>{f['category']}</td>"
             f"<td>{risk_badge}</td>"
-            f"<td style='font-size:0.88em'>{f['label']}</td>"
+            f"<td style='font-size:0.88em'>{re.sub(r'\\s*[–—-]\\s*(High|Medium|Low|Info)\\s*Risk\\s*', ' ', f['label']).strip()}</td>"
             f"<td style='font-size:0.82em;color:#555'>{note}</td>"
             f"{cdr_cell}"
             f"{struct_cols}"
