@@ -1068,6 +1068,38 @@ tbody tr:hover { background: #fafbff; }
 tbody td { padding: 8px 12px; vertical-align: middle; }
 .pos-cell { font-family: monospace; color: #7f8c8d; font-weight: 600; }
 
+/* Sortable headers */
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { background: #1a3a6e; }
+th.sort-asc::after  { content: ' ↑'; font-size: 0.78em; opacity: 0.7; }
+th.sort-desc::after { content: ' ↓'; font-size: 0.78em; opacity: 0.7; }
+
+/* Table filter controls */
+.tbl-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.tbl-search {
+  padding: 5px 10px;
+  border: 1px solid #dde1e7;
+  border-radius: 6px;
+  font-size: 0.86em;
+  width: 190px;
+}
+.tbl-search:focus { outline: none; border-color: #2980b9; }
+.tbl-risk-filter {
+  padding: 5px 10px;
+  border: 1px solid #dde1e7;
+  border-radius: 6px;
+  font-size: 0.86em;
+  background: #fff;
+  cursor: pointer;
+}
+.tbl-count { font-size: 0.82em; color: #999; margin-left: auto; }
+
 /* Legend table */
 .legend-table { font-size: 0.85em; }
 .legend-table td { padding: 6px 10px; vertical-align: top; }
@@ -1241,7 +1273,7 @@ def liability_legend_html() -> str:
     return "\n".join(rows)
 
 
-def findings_table_html(findings: list, has_structure: bool = False) -> str:
+def findings_table_html(findings: list, has_structure: bool = False, table_id: str = "liab-tbl-0") -> str:
     if not findings:
         return "<p><em>No liabilities found.</em></p>"
 
@@ -1269,11 +1301,11 @@ def findings_table_html(findings: list, has_structure: bool = False) -> str:
 
             # SS badge
             bg, fg = SS_COLORS.get(ss_val, ("#dee2e6", "#888"))
-            ss_full = {"H": "Helix", "E": "Strand", "T": "Turn", "C": "Coil"}.get(ss_val, ss_val)
+            ss_full = {"H": "Helix", "E": "Sheet", "T": "Turn", "C": "Coil"}.get(ss_val, ss_val)
             ss_badge = (
                 f'<span style="background:{bg};color:{fg};padding:2px 7px;'
-                f'border-radius:3px;font-family:monospace;font-weight:700;font-size:0.85em">'
-                f'{ss_val} <span style="font-weight:400;font-size:0.9em">{ss_full}</span></span>'
+                f'border-radius:3px;font-family:monospace;font-weight:600;font-size:0.85em">'
+                f'{ss_full}</span>'
             )
 
             # RSA bar
@@ -1302,8 +1334,9 @@ def findings_table_html(findings: list, has_structure: bool = False) -> str:
                 f'<td style="font-size:0.80em;color:#666">{exp_note}</td>'
             )
 
+        risk_order = RISK_ORDER.get(f["risk"], 9)
         rows.append(
-            f"<tr>"
+            f"<tr data-risk='{f['risk']}' data-risk-order='{risk_order}' data-pos='{f['pos1']}'>"
             f"<td class='pos-cell'>{f['pos1']}</td>"
             f"<td>{res_span}</td>"
             f"<td>{f['category']}</td>"
@@ -1313,7 +1346,47 @@ def findings_table_html(findings: list, has_structure: bool = False) -> str:
             f"{struct_cols}"
             f"</tr>"
         )
-    return "\n".join(rows)
+
+    struct_th = ""
+    if has_structure:
+        struct_th = (
+            "<th class='sortable' data-col='6' data-type='str'>Sec. Structure</th>"
+            "<th class='sortable' data-col='7' data-type='num'>RSA</th>"
+            "<th>Exposure</th>"
+            "<th>Structural Note</th>"
+        )
+
+    return f"""
+<div class="tbl-controls" id="ctrl-{table_id}">
+  <input class="tbl-search" type="text" placeholder="Search…"
+         oninput="tblFilter('{table_id}')">
+  <select class="tbl-risk-filter" onchange="tblFilter('{table_id}')">
+    <option value="">All risks</option>
+    <option value="high">High</option>
+    <option value="medium">Medium</option>
+    <option value="low">Low</option>
+    <option value="info">Info</option>
+  </select>
+  <span class="tbl-count" id="count-{table_id}"></span>
+</div>
+<div style="overflow-x:auto">
+  <table id="{table_id}">
+    <thead>
+      <tr>
+        <th class="sortable" data-col="0" data-type="num">Pos.</th>
+        <th>Residue</th>
+        <th class="sortable" data-col="2" data-type="str">Category</th>
+        <th class="sortable" data-col="3" data-type="risk">Risk</th>
+        <th>Type</th>
+        <th>Note</th>
+        {struct_th}
+      </tr>
+    </thead>
+    <tbody>
+      {"".join(rows)}
+    </tbody>
+  </table>
+</div>"""
 
 
 def summary_cards_html(summary: dict) -> str:
@@ -1350,7 +1423,7 @@ def hos_summary_card_html(stats: dict, source: str) -> str:
     bar_segs = []
     for ss_char, label, color in [
         ("H", "Helix",  "#00b4d8"),
-        ("E", "Strand", "#f9c74f"),
+        ("E", "Sheet",  "#f9c74f"),
         ("T", "Turn",   "#90be6d"),
         ("C", "Coil",   "#dee2e6"),
     ]:
@@ -1375,17 +1448,16 @@ def hos_summary_card_html(stats: dict, source: str) -> str:
       <div class="section-body">
         <div class="info-box">
           <strong>Source:</strong> {source}<br>
-          Prediction is based on local sequence context only.
-          For higher accuracy, provide a PDB structure file using <code>--pdb</code>.
+          {"Secondary structure and solvent exposure are derived from the provided PDB file." if source.startswith("PDB") else "Prediction is based on local sequence context only. For higher accuracy, provide a PDB structure file using <code>--pdb</code>."}
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:20px">
           <div class="summary-card">
-            <div class="card-title">α-Helix</div>
+            <div class="card-title">Helix</div>
             <div class="card-count">{counts.get("H",0)}</div>
             <div style="font-size:0.82em;color:#888">{counts.get("H",0)/n*100:.1f}% of residues</div>
           </div>
           <div class="summary-card">
-            <div class="card-title">β-Strand</div>
+            <div class="card-title">Sheet</div>
             <div class="card-count">{counts.get("E",0)}</div>
             <div style="font-size:0.82em;color:#888">{counts.get("E",0)/n*100:.1f}% of residues</div>
           </div>
@@ -1411,8 +1483,8 @@ def hos_summary_card_html(stats: dict, source: str) -> str:
         </div>
 
         <div style="margin-top:14px;display:flex;gap:16px;flex-wrap:wrap">
-          <span><span style="display:inline-block;width:14px;height:14px;background:#00b4d8;border-radius:2px;vertical-align:middle;margin-right:4px"></span>α-Helix (H)</span>
-          <span><span style="display:inline-block;width:14px;height:14px;background:#f9c74f;border-radius:2px;vertical-align:middle;margin-right:4px"></span>β-Strand (E)</span>
+          <span><span style="display:inline-block;width:14px;height:14px;background:#00b4d8;border-radius:2px;vertical-align:middle;margin-right:4px"></span>Helix</span>
+          <span><span style="display:inline-block;width:14px;height:14px;background:#f9c74f;border-radius:2px;vertical-align:middle;margin-right:4px"></span>Sheet</span>
           <span><span style="display:inline-block;width:14px;height:14px;background:#90be6d;border-radius:2px;vertical-align:middle;margin-right:4px"></span>β-Turn (T)</span>
           <span><span style="display:inline-block;width:14px;height:14px;background:#dee2e6;border-radius:2px;vertical-align:middle;margin-right:4px"></span>Coil (C)</span>
           <span style="margin-left:20px;color:#888;font-size:0.9em">
@@ -1437,7 +1509,7 @@ def build_html_report(sequences: list, title: str = "Protein Sequence Liability 
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     seq_sections = []
 
-    for entry in sequences:
+    for seq_idx, entry in enumerate(sequences):
         name       = entry["name"]
         seq        = entry["seq"]
         findings   = entry["findings"]
@@ -1446,8 +1518,9 @@ def build_html_report(sequences: list, title: str = "Protein Sequence Liability 
         rsa        = entry.get("rsa")
         has_struct = ss is not None and rsa is not None
 
-        annotated  = build_annotated_sequence(seq, findings, ss=ss, rsa=rsa)
-        table_rows = findings_table_html(findings, has_structure=has_struct)
+        annotated    = build_annotated_sequence(seq, findings, ss=ss, rsa=rsa)
+        table_block  = findings_table_html(findings, has_structure=has_struct,
+                                           table_id=f"liab-tbl-{seq_idx}")
         cards      = summary_cards_html(summary)
         total      = summary["total"]
         high_ct    = len(summary["by_risk"].get("high", []))
@@ -1459,16 +1532,6 @@ def build_html_report(sequences: list, title: str = "Protein Sequence Liability 
             if high_ct > 0
             else "✅  No high-risk liabilities detected."
         )
-
-        # Structure-specific columns header
-        struct_th = ""
-        if has_struct:
-            struct_th = (
-                "<th>Sec. Structure</th>"
-                "<th>RSA</th>"
-                "<th>Exposure</th>"
-                "<th>Structural Note</th>"
-            )
 
         # HOS section for this sequence
         hos_html = ""
@@ -1509,24 +1572,7 @@ def build_html_report(sequences: list, title: str = "Protein Sequence Liability 
               <div style="font-weight:600;margin-bottom:10px;color:#1a1a2e">
                 Liabilities Detail
               </div>
-              <div style="overflow-x:auto">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Pos.</th>
-                      <th>Residue(s)</th>
-                      <th>Category</th>
-                      <th>Risk</th>
-                      <th>Type</th>
-                      <th>Note</th>
-                      {struct_th}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {table_rows}
-                  </tbody>
-                </table>
-              </div>
+              {table_block}
             </div>
           </div>
         </div>
@@ -1598,6 +1644,73 @@ def build_html_report(sequences: list, title: str = "Protein Sequence Liability 
   </div>
 
 </div>
+
+<script>
+(function () {{
+  const RISK_ORDER = {{ high: 0, medium: 1, low: 2, info: 3 }};
+
+  function getVal(row, colIdx, type) {{
+    const text = (row.cells[colIdx] ? row.cells[colIdx].textContent.trim() : "");
+    if (type === "num")  return parseFloat(text) || 0;
+    if (type === "risk") return RISK_ORDER[row.dataset.risk] ?? 9;
+    return text.toLowerCase();
+  }}
+
+  window.tblSort = function (tableId, colIdx, type) {{
+    const tbl  = document.getElementById(tableId);
+    const head = tbl.querySelectorAll("thead th")[colIdx];
+    const asc  = head.dataset.dir !== "asc";
+    tbl.querySelectorAll("thead th").forEach(th => {{
+      th.dataset.dir = "";
+      th.classList.remove("sort-asc", "sort-desc");
+    }});
+    head.dataset.dir = asc ? "asc" : "desc";
+    head.classList.add(asc ? "sort-asc" : "sort-desc");
+    const tbody = tbl.querySelector("tbody");
+    Array.from(tbody.querySelectorAll("tr"))
+      .sort((a, b) => {{
+        const diff = (getVal(a, colIdx, type) > getVal(b, colIdx, type) ? 1 : -1);
+        return asc ? diff : -diff;
+      }})
+      .forEach(r => tbody.appendChild(r));
+    updateCount(tableId);
+  }};
+
+  window.tblFilter = function (tableId) {{
+    const ctrl  = document.getElementById("ctrl-" + tableId);
+    const query = ctrl.querySelector(".tbl-search").value.toLowerCase();
+    const risk  = ctrl.querySelector(".tbl-risk-filter").value;
+    document.getElementById(tableId).querySelectorAll("tbody tr").forEach(row => {{
+      const match = (!query || row.textContent.toLowerCase().includes(query))
+                 && (!risk  || row.dataset.risk === risk);
+      row.style.display = match ? "" : "none";
+    }});
+    updateCount(tableId);
+  }};
+
+  function updateCount(tableId) {{
+    const tbl     = document.getElementById(tableId);
+    const all     = tbl.querySelectorAll("tbody tr").length;
+    const visible = tbl.querySelectorAll("tbody tr:not([style*='display: none']):not([style*='display:none'])").length;
+    const el      = document.getElementById("count-" + tableId);
+    if (el) el.textContent = visible < all ? visible + " of " + all + " findings" : all + " findings";
+  }}
+
+  // Wire sortable headers and initialise counts
+  document.addEventListener("DOMContentLoaded", function () {{
+    document.querySelectorAll("th.sortable").forEach(function (th) {{
+      th.addEventListener("click", function () {{
+        const tbl = th.closest("table");
+        const idx = Array.from(tbl.querySelectorAll("thead th")).indexOf(th);
+        tblSort(tbl.id, idx, th.dataset.type || "str");
+      }});
+    }});
+    document.querySelectorAll("table[id^='liab-tbl-']").forEach(function (t) {{
+      updateCount(t.id);
+    }});
+  }});
+}}());
+</script>
 </body>
 </html>"""
 
