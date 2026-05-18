@@ -347,7 +347,7 @@ class App:
         self._centre(1040, 860)
 
         # State
-        self.v_mode     = tk.StringVar(value="paste")
+        self.v_mode     = tk.StringVar(value="file")
         self.v_fasta    = tk.StringVar()
         self.v_pdb      = tk.StringVar()
         self.v_chain    = tk.StringVar(value="")
@@ -376,6 +376,7 @@ class App:
         # 3D viewer state
         self._3d_results:   list         = []
         self._3d_pdb_text:  str | None   = None
+        self._3d_chains:    list         = []
 
         self._build_styles()
         self._build_header()
@@ -1478,6 +1479,7 @@ class App:
         chains: dict = {}
         for (chain, resnum) in ca_by_key:
             chains.setdefault(chain, []).append(resnum)
+        self._3d_chains = sorted(chains.keys())
 
         atoms: list = []
         bonds: list = []
@@ -1536,7 +1538,17 @@ class App:
             tk.Label(row, text=label, bg=DARK, fg="#ccccdd",
                      font=("Segoe UI", 8)).pack(side="left", padx=4)
 
-        if mode == "aa":
+        if mode == "chain":
+            if self._3d_chains:
+                tk.Label(self._3d_legend_frame, text="CHAIN",
+                         bg=DARK, fg="#aabbff", font=("Segoe UI", 9, "bold"),
+                         anchor="w").pack(fill="x", padx=12, pady=(8, 2))
+                for chain in self._3d_chains:
+                    ci  = ord(chain) % len(Mol3DCanvas._CHAIN_COLORS)
+                    col = Mol3DCanvas._CHAIN_COLORS[ci]
+                    _legend_row(self._3d_legend_frame, f"Chain {chain}", col)
+
+        elif mode == "aa":
             tk.Label(self._3d_legend_frame, text="AA TYPE",
                      bg=DARK, fg="#aabbff", font=("Segoe UI", 9, "bold"),
                      anchor="w").pack(fill="x", padx=12, pady=(8, 2))
