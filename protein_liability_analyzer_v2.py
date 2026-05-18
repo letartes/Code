@@ -37,6 +37,7 @@ Usage:
   python protein_liability_analyzer_v2.py sequence.fasta --output report.html
 """
 
+import json
 import re
 import sys
 import os
@@ -2157,24 +2158,378 @@ def process_sequences(pairs: list, pdb_text: Optional[str] = None,
         # Run structure analysis if requested
         if run_hos or pdb_text is not None:
             if pdb_text is not None:
-                ss, rsa, source = run_structure_analysis_pdb(
+                ss, rsa, source, seq_to_pdb = run_structure_analysis_pdb(
                     pdb_text, seq, chain_id=chain_id, verbose=verbose
                 )
             else:
                 ss, rsa, source = run_structure_analysis_sequence(seq, verbose=verbose)
+                seq_to_pdb = {}
 
             add_structural_context(findings, ss, rsa, source=source)
-            entry["ss"]        = ss
-            entry["rsa"]       = rsa
-            entry["hos_stats"] = hos_stats(ss, rsa)
+            entry["ss"]         = ss
+            entry["rsa"]        = rsa
+            entry["hos_stats"]  = hos_stats(ss, rsa)
             entry["hos_source"] = source
+            entry["seq_to_pdb"] = seq_to_pdb
 
         results.append(entry)
     return results
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 14. MAIN ENTRY POINT
+# 14. 3D VIEWER HTML GENERATOR
+# ══════════════════════════════════════════════════════════════════════════════
+
+def generate_3d_viewer_html(results: list, pdb_text: Optional[str],
+                             cdr_scheme: str = "kabat",
+                             title: str = "3D Structure") -> str:
+    """
+    Generate a standalone HTML page for 3D structure visualisation using 3Dmol.js.
+    Liabilities are shown as coloured spheres; CDR loops are highlighted on the
+    cartoon backbone.  The 3Dmol.js library (~2 MB) is loaded from the CDN on
+    demand — no data is transmitted from the browser.
+    """
+    if not pdb_text:
+        return ("<html><body style='font-family:sans-serif;padding:40px'>"
+                "<h2>No PDB structure available.</h2>"
+                "<p>Load a PDB file in the Analysis Setup tab and re-run.</p>"
+                "</body></html>")
+
+    # ── Build highlights and CDR region data ─────────────────────────────────
+    all_highlights: list = []
+    all_cdr_regions: list = []
+
+    RISK_HEX = {"high": "#e74c3c", "medium": "#e67e22",
+                "low": "#27ae60",  "info":   "#7cc4ff"}
+    SS_LABEL = {"H": "Helix", "E": "Sheet", "T": "Turn", "C": "Coil"}
+
+    for entry in results:
+        seq        = entry["seq"]
+        findings   = entry["findings"]
+        seq_name   = entry["name"]
+        seq_to_pdb = entry.get("seq_to_pdb", {})
+
+        cdrs        = annotate_cdrs(seq, scheme=cdr_scheme)
+        cdr_pos     = cdr_map(cdrs, len(seq))
+
+        # CDR cartoon bands
+        for cdr_s, cdr_e, cdr_name in cdrs:
+            chain_ids: dict = {}
+            for i in range(cdr_s, cdr_e):
+                if i in seq_to_pdb:
+                    ch, rn = seq_to_pdb[i]
+                    chain_ids.setdefault(ch, []).append(rn)
+            cdr_color = CDR_COLORS.get(cdr_name, ("#cccccc", "#333"))[0]
+            for ch, residues in chain_ids.items():
+                all_cdr_regions.append({
+                    "name": cdr_name, "chain": ch,
+                    "residues": residues, "color": cdr_color,
+                })
+
+        # Liability spheres
+        seen: set = set()
+        for f in findings:
+            pos0 = f["pos0"]
+            if pos0 not in seq_to_pdb:
+                continue
+            ch, rn   = seq_to_pdb[pos0]
+            key      = f"{ch}:{rn}"
+            aa       = seq[pos0] if pos0 < len(seq) else "?"
+            risk     = f.get("risk", "info")
+            cdr_name = cdr_pos[pos0] if pos0 < len(cdr_pos) else None
+            rsa_val  = f.get("rsa", None)
+            short    = f.get("short", "")
+            label    = f"{aa}{rn} {short}" + (f" [{cdr_name}]" if cdr_name else "")
+            cdr_col  = CDR_COLORS.get(cdr_name, ("#95a5a6","#333"))[0] if cdr_name else "#95a5a6"
+
+            if key in seen:
+                # Merge label onto existing entry
+                existing = next((h for h in all_highlights if h["key"] == key), None)
+                if existing and short not in existing["label"]:
+                    existing["label"] += f"/{short}"
+                continue
+            seen.add(key)
+
+            all_highlights.append({
+                "key":      key,
+                "name":     seq_name,
+                "chain":    ch,
+                "resi":     rn,
+                "risk":     risk,
+                "riskColor": RISK_HEX.get(risk, "#95a5a6"),
+                "short":    short,
+                "category": f.get("category", ""),
+                "aa":       aa,
+                "cdr":      cdr_name,
+                "cdrColor": cdr_col,
+                "ss":       SS_LABEL.get(f.get("ss", "C") or "C", "—"),
+                "rsa":      round(rsa_val * 100) if rsa_val is not None else None,
+                "exposure": f.get("exposure_class", "—") or "—",
+                "label":    label,
+            })
+
+    # ── Escape PDB text for JS template literal ───────────────────────────────
+    pdb_js = pdb_text.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+
+    data_js = json.dumps({
+        "title":       title,
+        "cdrScheme":   CDR_SCHEME_LABELS.get(cdr_scheme, cdr_scheme),
+        "highlights":  all_highlights,
+        "cdrRegions":  all_cdr_regions,
+    }, ensure_ascii=False)
+
+    # ── LSC logo SVG (white on dark, Futura-style) ────────────────────────────
+    logo_svg = (
+        '<svg width="56" height="28" viewBox="0 0 56 28" xmlns="http://www.w3.org/2000/svg">'
+        '<rect x="1.5" y="1.5" width="53" height="25" rx="12.5" ry="12.5" fill="none" '
+        'stroke="rgba(255,255,255,0.8)" stroke-width="2"/>'
+        '<text x="28" y="19" text-anchor="middle" '
+        'font-family="Futura,\'Century Gothic\',\'Trebuchet MS\',sans-serif" '
+        'font-size="13" font-weight="700" fill="rgba(255,255,255,0.88)" letter-spacing="1">'
+        'LSC</text></svg>'
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>{title} — 3D Viewer</title>
+<style>
+*,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0b1020;color:#e8edf7;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;
+     display:flex;flex-direction:column;height:100vh;overflow:hidden}}
+#hdr{{background:#131a2b;border-bottom:1px solid #2b3550;padding:8px 16px;
+      display:flex;align-items:center;gap:12px;flex-shrink:0}}
+#hdr-title{{font-weight:700;font-size:1em;color:#e8edf7}}
+#hdr-meta{{font-size:0.78em;color:#5c6f8a;margin-left:4px}}
+#hdr-scheme{{margin-left:auto;font-size:0.75em;background:rgba(124,196,255,0.08);
+             color:#7cc4ff;padding:2px 9px;border-radius:10px;font-weight:600}}
+#ctrl{{background:#131a2b;border-bottom:1px solid #2b3550;padding:7px 14px;
+       display:flex;flex-wrap:wrap;gap:10px;align-items:center;flex-shrink:0;font-size:0.8em}}
+.ctrl-lbl{{color:#7cc4ff;font-weight:700;margin-right:2px}}
+.ctrl-grp{{display:flex;align-items:center;gap:6px}}
+label.rl{{display:flex;align-items:center;gap:3px;color:#e8edf7;cursor:pointer}}
+input[type=radio],input[type=checkbox]{{accent-color:#7cc4ff}}
+.ctrl-sep{{color:#2b3550;font-size:1.2em}}
+#viewer-wrap{{flex:1;position:relative;overflow:hidden;min-height:0}}
+#viewer{{position:absolute;inset:0}}
+#gate{{position:absolute;inset:0;display:flex;flex-direction:column;
+       align-items:center;justify-content:center;gap:16px;background:#0b1020;z-index:10}}
+#gate h2{{font-size:1.1em;color:#e8edf7}}
+#gate p{{font-size:0.85em;color:#aab6cf;max-width:400px;text-align:center;line-height:1.6}}
+#gate-warn{{font-size:0.8em;color:#e74c3c;font-weight:600}}
+#load-btn{{background:rgba(124,196,255,0.1);color:#7cc4ff;border:1px solid #7cc4ff;
+           border-radius:10px;padding:10px 28px;cursor:pointer;font-size:0.95em;
+           font-weight:700;font-family:inherit;transition:opacity .15s}}
+#load-btn:hover:not(:disabled){{opacity:0.8}}
+#load-btn:disabled{{opacity:0.45;cursor:wait}}
+#legend{{background:#131a2b;border-top:1px solid #2b3550;padding:6px 14px;
+         display:flex;gap:16px;align-items:center;flex-shrink:0;flex-wrap:wrap;font-size:0.75em}}
+.leg-item{{display:flex;align-items:center;gap:5px;color:#aab6cf}}
+.leg-dot{{width:10px;height:10px;border-radius:50%;display:inline-block;flex-shrink:0}}
+</style>
+</head>
+<body>
+
+<div id="hdr">
+  {logo_svg}
+  <div>
+    <span id="hdr-title">{title}</span>
+    <span id="hdr-meta"></span>
+  </div>
+  <span id="hdr-scheme">CDR: {CDR_SCHEME_LABELS.get(cdr_scheme, cdr_scheme)}</span>
+</div>
+
+<div id="ctrl">
+  <span class="ctrl-lbl">Color by:</span>
+  <div class="ctrl-grp">
+    <label class="rl"><input type="radio" name="colorBy" value="risk" checked> Risk</label>
+    <label class="rl"><input type="radio" name="colorBy" value="cdr"> CDR</label>
+    <label class="rl"><input type="radio" name="colorBy" value="aa"> Amino acid</label>
+    <label class="rl"><input type="radio" name="colorBy" value="ss"> Sec. structure</label>
+  </div>
+  <span class="ctrl-sep">|</span>
+  <span class="ctrl-lbl">Show:</span>
+  <div class="ctrl-grp" id="risk-filter">
+    <label class="rl"><input type="radio" name="filterRisk" value="all" checked> All</label>
+    <label class="rl"><input type="radio" name="filterRisk" value="high"> High</label>
+    <label class="rl"><input type="radio" name="filterRisk" value="medium"> Med</label>
+    <label class="rl"><input type="radio" name="filterRisk" value="low"> Low</label>
+  </div>
+  <span class="ctrl-sep">|</span>
+  <label class="rl"><input type="checkbox" id="chk-surface"> Surface</label>
+  <label class="rl"><input type="checkbox" id="chk-labels"> Labels</label>
+  <label class="rl"><input type="checkbox" id="chk-cdrcartoon" checked> CDR cartoon</label>
+</div>
+
+<div id="viewer-wrap">
+  <div id="viewer"></div>
+  <div id="gate">
+    <h2>3D Viewer — 3Dmol.js required</h2>
+    <p>The viewer uses <b style="color:#7cc4ff">3Dmol.js</b>, a WebGL molecular
+       rendering library (~2 MB). Your structure and sequence data never leave your browser.</p>
+    <button id="load-btn" onclick="loadDmol()">Load 3D Viewer</button>
+    <span id="gate-warn" style="display:none">Failed to load — check your connection and retry.</span>
+  </div>
+</div>
+
+<div id="legend"></div>
+
+<script>
+const DATA = {data_js};
+const PDB_TEXT = `{pdb_js}`;
+
+const RISK_HEX  = {{high:'#e74c3c', medium:'#e67e22', low:'#27ae60', info:'#7cc4ff'}};
+const SS_HEX    = {{Helix:'#2196f3', Sheet:'#4caf50', Turn:'#ff9800', Coil:'#90a4ae'}};
+const AA_HEX    = {{}};
+for(const aa of 'FYW')     AA_HEX[aa]='#9b59b6';
+for(const aa of 'KRH')     AA_HEX[aa]='#2980b9';
+for(const aa of 'DE')      AA_HEX[aa]='#e74c3c';
+for(const aa of 'STNQC')   AA_HEX[aa]='#27ae60';
+for(const aa of 'AVLIMPG') AA_HEX[aa]='#e67e22';
+
+let viewer = null;
+let colorBy   = 'risk';
+let filterRisk= 'all';
+let showSurf  = false;
+let showLbls  = false;
+let showCDR   = true;
+
+function getColor(h) {{
+  if (colorBy==='risk')   return RISK_HEX[h.risk]||'#95a5a6';
+  if (colorBy==='cdr')    return h.cdr ? h.cdrColor : '#5c6f8a';
+  if (colorBy==='aa')     return AA_HEX[h.aa]||'#95a5a6';
+  if (colorBy==='ss')     return SS_HEX[h.ss]||'#95a5a6';
+  return '#7cc4ff';
+}}
+
+function updateLegend() {{
+  const leg = document.getElementById('legend');
+  let items = [];
+  if (colorBy==='risk') {{
+    items = [['#e74c3c','High'],['#e67e22','Medium'],['#27ae60','Low'],['#7cc4ff','Info']];
+  }} else if (colorBy==='cdr') {{
+    const cdrs = [...new Set(DATA.highlights.filter(h=>h.cdr).map(h=>h.cdr))];
+    cdrs.forEach(c => {{
+      const h = DATA.highlights.find(h=>h.cdr===c);
+      items.push([h.cdrColor, c]);
+    }});
+    items.push(['#5c6f8a','Framework']);
+  }} else if (colorBy==='aa') {{
+    items = [['#9b59b6','Aromatic F/Y/W'],['#2980b9','+ charged K/R/H'],
+             ['#e74c3c','− charged D/E'],['#27ae60','Polar S/T/N/Q/C'],
+             ['#e67e22','Nonpolar A/V/L/I/M/P/G']];
+  }} else if (colorBy==='ss') {{
+    items = [['#2196f3','Helix'],['#4caf50','Sheet'],['#ff9800','Turn/Coil']];
+  }}
+  leg.innerHTML = '<span style="color:#5c6f8a;font-weight:700;font-size:0.74em">LEGEND:</span>' +
+    items.map(([c,l])=>
+      `<span class="leg-item"><span class="leg-dot" style="background:${{c}}"></span>${{l}}</span>`
+    ).join('');
+}}
+
+function render() {{
+  if (!viewer) return;
+  viewer.removeAllModels();
+  viewer.removeAllSurfaces();
+  viewer.removeAllLabels();
+
+  viewer.addModel(PDB_TEXT, 'pdb');
+  // Base cartoon — muted grey
+  viewer.setStyle({{}}, {{cartoon:{{color:'#5c6f8a', opacity:0.82, thickness:0.3}}}});
+
+  // CDR cartoon overlay
+  if (showCDR) {{
+    DATA.cdrRegions.forEach(r => {{
+      viewer.addStyle(
+        {{chain:r.chain, resi:r.residues}},
+        {{cartoon:{{color:r.color, opacity:0.95, thickness:0.45}}}}
+      );
+    }});
+  }}
+
+  // Liability spheres
+  DATA.highlights.forEach(h => {{
+    if (filterRisk!=='all' && h.risk!==filterRisk) return;
+    const col = getColor(h);
+    viewer.addStyle(
+      {{chain:h.chain, resi:[h.resi], atom:'CA'}},
+      {{sphere:{{color:col, radius:1.4, opacity:0.92}}}}
+    );
+    if (showLbls) {{
+      viewer.addLabel(h.label, {{
+        position:{{chain:h.chain, resi:h.resi, atom:'CA'}},
+        backgroundColor:'#0b1020', backgroundOpacity:0.75,
+        fontColor:col, fontSize:10,
+        borderColor:col, borderThickness:1,
+      }}, {{chain:h.chain, resi:[h.resi], atom:'CA'}});
+    }}
+  }});
+
+  if (showSurf) {{
+    viewer.addSurface(window.$3Dmol.SurfaceType.SAS,
+      {{opacity:0.28, colorscheme:{{gradient:'rwb',min:-1,max:1}}}}, {{}});
+  }}
+
+  viewer.zoomTo();
+  viewer.render();
+  updateLegend();
+}}
+
+function loadDmol() {{
+  const btn = document.getElementById('load-btn');
+  btn.disabled = true;
+  btn.textContent = 'Loading 3Dmol.js…';
+  const s = document.createElement('script');
+  s.src = 'https://3dmol.org/build/3Dmol-min.js';
+  s.onload = () => {{
+    document.getElementById('gate').style.display = 'none';
+    viewer = window.$3Dmol.createViewer(
+      document.getElementById('viewer'),
+      {{backgroundColor:'#0b1020', antialias:true}}
+    );
+    // Update header meta
+    const n = DATA.highlights.length;
+    document.getElementById('hdr-meta').textContent =
+      ` · ${{n}} liabilit${{n===1?'y':'ies'}} mapped`;
+    render();
+  }};
+  s.onerror = () => {{
+    btn.disabled = false;
+    btn.textContent = 'Retry';
+    document.getElementById('gate-warn').style.display = '';
+  }};
+  document.head.appendChild(s);
+}}
+
+// Control wiring
+document.querySelectorAll('input[name=colorBy]').forEach(el =>
+  el.addEventListener('change', () => {{ colorBy=el.value; render(); }}));
+document.querySelectorAll('input[name=filterRisk]').forEach(el =>
+  el.addEventListener('change', () => {{ filterRisk=el.value; render(); }}));
+document.getElementById('chk-surface').addEventListener('change', e =>
+  {{ showSurf=e.target.checked; render(); }});
+document.getElementById('chk-labels').addEventListener('change', e =>
+  {{ showLbls=e.target.checked; render(); }});
+document.getElementById('chk-cdrcartoon').addEventListener('change', e =>
+  {{ showCDR=e.target.checked; render(); }});
+
+// Hide risk filter when irrelevant coloring mode selected
+document.querySelectorAll('input[name=colorBy]').forEach(el =>
+  el.addEventListener('change', () => {{
+    document.getElementById('risk-filter').style.opacity =
+      (colorBy==='risk') ? '1' : '0.3';
+  }}));
+
+updateLegend();
+</script>
+</body>
+</html>"""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 15. MAIN ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
