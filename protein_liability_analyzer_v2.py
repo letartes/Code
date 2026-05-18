@@ -37,6 +37,7 @@ Usage:
   python protein_liability_analyzer_v2.py sequence.fasta --output report.html
 """
 
+import json
 import re
 import sys
 import os
@@ -584,6 +585,122 @@ def predict_rsa_from_sequence(seq: str, ss: list) -> list:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 6b. CDR ANNOTATION  (anchor-based, no external alignment tool required)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# CDR start/end offsets (0-based, half-open) relative to the two structural
+# cysteines.  cdr1 and cdr2 are expressed as (offset_from_c1_start,
+# offset_from_c1_end); cdr3 always starts at c2+1 and ends at FR4 start.
+_CDR_OFFSETS: dict = {
+    "H": {
+        "kabat":   {"cdr1": ( 9, 14), "cdr2": (28, 44)},
+        "chothia": {"cdr1": ( 4, 11), "cdr2": (30, 35)},
+        "imgt":    {"cdr1": ( 5, 17), "cdr2": (33, 44)},
+    },
+    "L": {
+        "kabat":   {"cdr1": ( 1, 12), "cdr2": (27, 34)},
+        "chothia": {"cdr1": ( 1, 12), "cdr2": (27, 34)},
+        "imgt":    {"cdr1": ( 4, 16), "cdr2": (33, 44)},
+    },
+}
+
+# FR4 motifs used as CDR3 end anchors
+_VH_FR4 = re.compile(r'W[GASVT][QKRSE][GSA]')   # e.g. WGQG, WGAG, WSQG
+_VL_FR4 = re.compile(r'F[GASVT][QSG][GT]')        # e.g. FGQG, FGSG, FGTG
+
+# CDR colours for HTML display
+CDR_COLORS: dict = {
+    "CDR-H1": ("#cce5ff", "#004085"),
+    "CDR-H2": ("#fff3cd", "#856404"),
+    "CDR-H3": ("#f8d7da", "#721c24"),
+    "CDR-L1": ("#d4edda", "#155724"),
+    "CDR-L2": ("#fff3cd", "#856404"),
+    "CDR-L3": ("#f8d7da", "#721c24"),
+}
+
+CDR_SCHEME_LABELS: dict = {
+    "kabat":   "Kabat",
+    "chothia": "Chothia",
+    "imgt":    "IMGT",
+}
+
+
+def annotate_cdrs(seq: str, scheme: str = "kabat") -> list:
+    """
+    Identify CDR regions in an antibody variable domain sequence.
+
+    Uses the two conserved structural cysteines as anchors (Kabat C22/C92 for
+    VH, C23/C88 for VL) together with the FR4 motif (WGXG / FGXG) to locate
+    CDR boundaries without requiring external alignment.
+
+    Returns: list of (start, end, name) tuples — 0-based, end exclusive.
+             name is e.g. 'CDR-H1', 'CDR-L3'.
+             Returns [] if the sequence does not look like an antibody V domain.
+    """
+    seq    = seq.upper()
+    n      = len(seq)
+    scheme = scheme.lower()
+    if scheme not in ("kabat", "chothia", "imgt"):
+        scheme = "kabat"
+
+    # ── Find the conserved disulfide Cys pair ─────────────────────────────────
+    cys_pos = [i for i, aa in enumerate(seq) if aa == "C"]
+    c1 = c2 = None
+    for i in range(len(cys_pos)):
+        for j in range(i + 1, len(cys_pos)):
+            dist = cys_pos[j] - cys_pos[i]
+            if 55 <= dist <= 82:          # VH ~70, VL ~65 residues apart
+                c1, c2 = cys_pos[i], cys_pos[j]
+                break
+        if c1 is not None:
+            break
+    if c1 is None:
+        return []
+
+    # ── Identify chain type via FR4 motif ────────────────────────────────────
+    tail   = seq[c2:]
+    vh_m   = _VH_FR4.search(tail)
+    vl_m   = _VL_FR4.search(tail)
+
+    if vh_m and (not vl_m or vh_m.start() <= vl_m.start()):
+        chain   = "H"
+        fr4_pos = c2 + vh_m.start()
+    elif vl_m:
+        chain   = "L"
+        fr4_pos = c2 + vl_m.start()
+    else:
+        return []   # cannot determine chain type
+
+    # ── CDR positions ─────────────────────────────────────────────────────────
+    o      = _CDR_OFFSETS[chain][scheme]
+    cdr1_s = max(0, c1 + o["cdr1"][0])
+    cdr1_e = min(n, c1 + o["cdr1"][1])
+    cdr2_s = max(0, c1 + o["cdr2"][0])
+    cdr2_e = min(n, c1 + o["cdr2"][1])
+    cdr3_s = max(0, c2 + 1)
+    cdr3_e = min(n, fr4_pos)
+
+    cdrs = []
+    for s, e, name in [
+        (cdr1_s, cdr1_e, f"CDR-{chain}1"),
+        (cdr2_s, cdr2_e, f"CDR-{chain}2"),
+        (cdr3_s, cdr3_e, f"CDR-{chain}3"),
+    ]:
+        if s < e:
+            cdrs.append((s, e, name))
+    return cdrs
+
+
+def cdr_map(cdrs: list, n: int) -> list:
+    """Return a per-position CDR name list (None if not in any CDR)."""
+    mapping = [None] * n
+    for s, e, name in cdrs:
+        for i in range(s, e):
+            mapping[i] = name
+    return mapping
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 7. PDB PARSING
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -712,8 +829,8 @@ def map_pdb_to_sequence(pdb_residues: list, seq: str, chain_id: Optional[str] = 
     best_offset = 0
     best_score  = -1
 
-    # Try every start offset within ±50 residues
-    for offset in range(-50, 51):
+    # Try every possible offset so multi-chain PDBs don't miss the right chain
+    for offset in range(-len(seq) + 1, len(pdb_seq)):
         score = 0
         for i, aa in enumerate(seq):
             pdb_i = i + offset
@@ -1068,6 +1185,38 @@ tbody tr:hover { background: #fafbff; }
 tbody td { padding: 8px 12px; vertical-align: middle; }
 .pos-cell { font-family: monospace; color: #7f8c8d; font-weight: 600; }
 
+/* Sortable headers */
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { background: #1a3a6e; }
+th.sort-asc::after  { content: ' ↑'; font-size: 0.78em; opacity: 0.7; }
+th.sort-desc::after { content: ' ↓'; font-size: 0.78em; opacity: 0.7; }
+
+/* Table filter controls */
+.tbl-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.tbl-search {
+  padding: 5px 10px;
+  border: 1px solid #dde1e7;
+  border-radius: 6px;
+  font-size: 0.86em;
+  width: 190px;
+}
+.tbl-search:focus { outline: none; border-color: #2980b9; }
+.tbl-risk-filter {
+  padding: 5px 10px;
+  border: 1px solid #dde1e7;
+  border-radius: 6px;
+  font-size: 0.86em;
+  background: #fff;
+  cursor: pointer;
+}
+.tbl-count { font-size: 0.82em; color: #999; margin-left: auto; }
+
 /* Legend table */
 .legend-table { font-size: 0.85em; }
 .legend-table td { padding: 6px 10px; vertical-align: top; }
@@ -1097,6 +1246,13 @@ tbody td { padding: 8px 12px; vertical-align: middle; }
   body { background: #fff; }
   .section { box-shadow: none; border: 1px solid #ddd; }
 }
+
+/* CDR legend strip */
+.cdr-legend { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;
+              font-size:0.82em; align-items:center; }
+.cdr-legend-item { display:flex; align-items:center; gap:5px; }
+.cdr-swatch { display:inline-block; width:14px; height:14px; border-radius:3px;
+              border:1px solid rgba(0,0,0,.15); }
 """
 
 SS_COLORS = {
@@ -1127,9 +1283,11 @@ def _rsa_color(rsa: float) -> str:
 def build_annotated_sequence(seq: str, findings: list,
                               ss: Optional[list] = None,
                               rsa: Optional[list] = None,
+                              cdrs: Optional[list] = None,
                               wrap: int = 60) -> str:
     """
     Build the HTML annotated-sequence block.
+    Residues are colour-coded by CDR membership (if cdrs provided).
     When ss/rsa are provided, adds two extra tracks below each sequence line:
       - Secondary-structure colour track (H/E/T/C)
       - RSA heatmap track (blue=buried → red=exposed)
@@ -1137,38 +1295,56 @@ def build_annotated_sequence(seq: str, findings: list,
     n = len(seq)
     has_struct = ss is not None and rsa is not None
 
-    # Build per-position liability mapping
+    # Per-position CDR name (None = framework)
+    cdr_pos = cdr_map(cdrs, n) if cdrs else [None] * n
+
+    # Per-position liability tooltip (not used for colour anymore)
     pos_findings = [[] for _ in range(n)]
     for f in findings:
         for j in range(f["pos0"], min(f["pos0"] + f["span"], n)):
             pos_findings[j].append(f)
 
     def best_finding(flist):
-        if not flist:
-            return None
-        return min(flist, key=lambda f: RISK_ORDER.get(f["risk"], 9))
+        return min(flist, key=lambda f: RISK_ORDER.get(f["risk"], 9)) if flist else None
 
     # Build HTML spans for each residue
     html_chars = []
     for i, aa in enumerate(seq):
-        flist = pos_findings[i]
-        if not flist:
-            html_chars.append(f'<span class="aa">{aa}</span>')
-        else:
-            bf    = best_finding(flist)
-            types = " | ".join(sorted({f["short"] for f in flist}))
+        cdr_name = cdr_pos[i]
+        flist    = pos_findings[i]
+        bf       = best_finding(flist)
+
+        # Tooltip: liability info takes priority; CDR label appended if present
+        parts = []
+        if flist:
+            parts.append(" | ".join(sorted({f["short"] for f in flist})))
             notes = "; ".join(filter(None, [f.get("note", "") for f in flist]))
-            title = f"Pos {i+1}: {types}"
             if notes:
-                title += f" — {notes}"
+                parts.append(notes)
+        if cdr_name:
+            parts.append(cdr_name)
+        title = f"Pos {i+1}" + (": " + " — ".join(parts) if parts else "")
+
+        # Background: CDR colour if in CDR, else plain
+        if cdr_name:
+            bg, fg = CDR_COLORS.get(cdr_name, ("#e8e8e8", "#333"))
+            # Underline if also a liability
+            border = f"border-bottom:2px solid {bf['color_border']};" if bf else ""
+            style  = f"background:{bg};color:{fg};{border}"
+            html_chars.append(
+                f'<span class="aa" style="{style}" title="{title}">{aa}</span>'
+            )
+        elif bf:
+            # Liability outside CDR: subtle underline only, no background fill
             style = (
-                f"background:{bf['color_bg']};"
+                f"border-bottom:3px solid {bf['color_border']};"
                 f"color:{bf['color_text']};"
-                f"border-bottom:2px solid {bf['color_border']};"
             )
             html_chars.append(
                 f'<span class="aa liability" style="{style}" title="{title}">{aa}</span>'
             )
+        else:
+            html_chars.append(f'<span class="aa" title="{title}">{aa}</span>')
 
     lines_html = []
     for start in range(0, n, wrap):
@@ -1241,9 +1417,17 @@ def liability_legend_html() -> str:
     return "\n".join(rows)
 
 
-def findings_table_html(findings: list, has_structure: bool = False) -> str:
+def findings_table_html(findings: list, has_structure: bool = False,
+                        table_id: str = "liab-tbl-0",
+                        cdrs: Optional[list] = None) -> str:
     if not findings:
         return "<p><em>No liabilities found.</em></p>"
+
+    # Build CDR membership set: pos0 → CDR name
+    cdr_at: dict = {}
+    for s, e, name in (cdrs or []):
+        for i in range(s, e):
+            cdr_at[i] = name
 
     sorted_f = sorted(findings, key=lambda f: (RISK_ORDER.get(f["risk"], 9), f["pos0"]))
 
@@ -1269,11 +1453,11 @@ def findings_table_html(findings: list, has_structure: bool = False) -> str:
 
             # SS badge
             bg, fg = SS_COLORS.get(ss_val, ("#dee2e6", "#888"))
-            ss_full = {"H": "Helix", "E": "Strand", "T": "Turn", "C": "Coil"}.get(ss_val, ss_val)
+            ss_full = {"H": "Helix", "E": "Sheet", "T": "Turn", "C": "Coil"}.get(ss_val, ss_val)
             ss_badge = (
                 f'<span style="background:{bg};color:{fg};padding:2px 7px;'
-                f'border-radius:3px;font-family:monospace;font-weight:700;font-size:0.85em">'
-                f'{ss_val} <span style="font-weight:400;font-size:0.9em">{ss_full}</span></span>'
+                f'border-radius:3px;font-family:monospace;font-weight:600;font-size:0.85em">'
+                f'{ss_full}</span>'
             )
 
             # RSA bar
@@ -1302,18 +1486,88 @@ def findings_table_html(findings: list, has_structure: bool = False) -> str:
                 f'<td style="font-size:0.80em;color:#666">{exp_note}</td>'
             )
 
+        # CDR membership
+        cdr_name = cdr_at.get(f["pos0"])
+        if cdr_name:
+            bg, fg = CDR_COLORS.get(cdr_name, ("#e8e8e8", "#333"))
+            cdr_cell = (
+                f'<td><span style="background:{bg};color:{fg};padding:2px 8px;'
+                f'border-radius:3px;font-size:0.82em;font-weight:600;white-space:nowrap">'
+                f'{cdr_name}</span></td>'
+            )
+            cdr_data = f"data-cdr='{cdr_name}'"
+        else:
+            cdr_cell = "<td style='color:#aaa;font-size:0.82em'>FR</td>"
+            cdr_data = "data-cdr='fr'"
+
+        risk_order = RISK_ORDER.get(f["risk"], 9)
         rows.append(
-            f"<tr>"
+            f"<tr data-risk='{f['risk']}' data-risk-order='{risk_order}' "
+            f"data-pos='{f['pos1']}' {cdr_data}>"
             f"<td class='pos-cell'>{f['pos1']}</td>"
             f"<td>{res_span}</td>"
             f"<td>{f['category']}</td>"
             f"<td>{risk_badge}</td>"
-            f"<td style='font-size:0.88em'>{f['label']}</td>"
             f"<td style='font-size:0.82em;color:#555'>{note}</td>"
+            f"{cdr_cell}"
             f"{struct_cols}"
             f"</tr>"
         )
-    return "\n".join(rows)
+
+    # Column indices shift +1 after CDR col is inserted at position 6
+    struct_th = ""
+    if has_structure:
+        struct_th = (
+            "<th class='sortable' data-col='7' data-type='str'>Sec. Structure</th>"
+            "<th class='sortable' data-col='8' data-type='num'>RSA</th>"
+            "<th>Exposure</th>"
+            "<th>Structural Note</th>"
+        )
+
+    has_cdrs = bool(cdr_at)
+    cdr_filter_opts = ""
+    if has_cdrs:
+        cdr_names = sorted({v for v in cdr_at.values()})
+        cdr_filter_opts = "".join(
+            f'<option value="{c}">{c}</option>' for c in cdr_names
+        )
+
+    return f"""
+<div class="tbl-controls" id="ctrl-{table_id}">
+  <input class="tbl-search" type="text" placeholder="Search…"
+         oninput="tblFilter('{table_id}')">
+  <select class="tbl-risk-filter" onchange="tblFilter('{table_id}')">
+    <option value="">All risks</option>
+    <option value="high">High</option>
+    <option value="medium">Medium</option>
+    <option value="low">Low</option>
+    <option value="info">Info</option>
+  </select>
+  {'<select class="tbl-cdr-filter" onchange="tblFilter(\'' + table_id + '\')">'
+    '<option value="">All regions</option>'
+    '<option value="fr">FR only</option>'
+    + cdr_filter_opts +
+   '</select>' if has_cdrs else ''}
+  <span class="tbl-count" id="count-{table_id}"></span>
+</div>
+<div style="overflow-x:auto">
+  <table id="{table_id}">
+    <thead>
+      <tr>
+        <th class="sortable" data-col="0" data-type="num">Pos.</th>
+        <th>Residue</th>
+        <th class="sortable" data-col="2" data-type="str">Category</th>
+        <th class="sortable" data-col="3" data-type="risk">Risk</th>
+        <th>Note</th>
+        <th class="sortable" data-col="6" data-type="str">Region</th>
+        {struct_th}
+      </tr>
+    </thead>
+    <tbody>
+      {"".join(rows)}
+    </tbody>
+  </table>
+</div>"""
 
 
 def summary_cards_html(summary: dict) -> str:
@@ -1350,7 +1604,7 @@ def hos_summary_card_html(stats: dict, source: str) -> str:
     bar_segs = []
     for ss_char, label, color in [
         ("H", "Helix",  "#00b4d8"),
-        ("E", "Strand", "#f9c74f"),
+        ("E", "Sheet",  "#f9c74f"),
         ("T", "Turn",   "#90be6d"),
         ("C", "Coil",   "#dee2e6"),
     ]:
@@ -1375,17 +1629,16 @@ def hos_summary_card_html(stats: dict, source: str) -> str:
       <div class="section-body">
         <div class="info-box">
           <strong>Source:</strong> {source}<br>
-          Prediction is based on local sequence context only.
-          For higher accuracy, provide a PDB structure file using <code>--pdb</code>.
+          {"Secondary structure and solvent exposure are derived from the provided PDB file." if source.startswith("PDB") else "Prediction is based on local sequence context only. For higher accuracy, provide a PDB structure file using <code>--pdb</code>."}
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:20px">
           <div class="summary-card">
-            <div class="card-title">α-Helix</div>
+            <div class="card-title">Helix</div>
             <div class="card-count">{counts.get("H",0)}</div>
             <div style="font-size:0.82em;color:#888">{counts.get("H",0)/n*100:.1f}% of residues</div>
           </div>
           <div class="summary-card">
-            <div class="card-title">β-Strand</div>
+            <div class="card-title">Sheet</div>
             <div class="card-count">{counts.get("E",0)}</div>
             <div style="font-size:0.82em;color:#888">{counts.get("E",0)/n*100:.1f}% of residues</div>
           </div>
@@ -1411,8 +1664,8 @@ def hos_summary_card_html(stats: dict, source: str) -> str:
         </div>
 
         <div style="margin-top:14px;display:flex;gap:16px;flex-wrap:wrap">
-          <span><span style="display:inline-block;width:14px;height:14px;background:#00b4d8;border-radius:2px;vertical-align:middle;margin-right:4px"></span>α-Helix (H)</span>
-          <span><span style="display:inline-block;width:14px;height:14px;background:#f9c74f;border-radius:2px;vertical-align:middle;margin-right:4px"></span>β-Strand (E)</span>
+          <span><span style="display:inline-block;width:14px;height:14px;background:#00b4d8;border-radius:2px;vertical-align:middle;margin-right:4px"></span>Helix</span>
+          <span><span style="display:inline-block;width:14px;height:14px;background:#f9c74f;border-radius:2px;vertical-align:middle;margin-right:4px"></span>Sheet</span>
           <span><span style="display:inline-block;width:14px;height:14px;background:#90be6d;border-radius:2px;vertical-align:middle;margin-right:4px"></span>β-Turn (T)</span>
           <span><span style="display:inline-block;width:14px;height:14px;background:#dee2e6;border-radius:2px;vertical-align:middle;margin-right:4px"></span>Coil (C)</span>
           <span style="margin-left:20px;color:#888;font-size:0.9em">
@@ -1427,17 +1680,19 @@ def hos_summary_card_html(stats: dict, source: str) -> str:
 
 
 def build_html_report(sequences: list, title: str = "Protein Sequence Liability Analysis",
-                       generated_by: str = "Protein Liability Analyzer v2") -> str:
+                       generated_by: str = "Protein Liability Analyzer v2",
+                       cdr_scheme: str = "kabat") -> str:
     """
     Build the full HTML report.
     sequences: list of dicts with keys:
       name, seq, findings, summary, ss (optional), rsa (optional),
       hos_stats (optional), hos_source (optional)
+    cdr_scheme: 'kabat', 'chothia', or 'imgt'
     """
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     seq_sections = []
 
-    for entry in sequences:
+    for seq_idx, entry in enumerate(sequences):
         name       = entry["name"]
         seq        = entry["seq"]
         findings   = entry["findings"]
@@ -1446,8 +1701,11 @@ def build_html_report(sequences: list, title: str = "Protein Sequence Liability 
         rsa        = entry.get("rsa")
         has_struct = ss is not None and rsa is not None
 
-        annotated  = build_annotated_sequence(seq, findings, ss=ss, rsa=rsa)
-        table_rows = findings_table_html(findings, has_structure=has_struct)
+        cdrs      = annotate_cdrs(seq, scheme=cdr_scheme)
+        annotated = build_annotated_sequence(seq, findings, ss=ss, rsa=rsa, cdrs=cdrs)
+        table_block = findings_table_html(findings, has_structure=has_struct,
+                                          table_id=f"liab-tbl-{seq_idx}",
+                                          cdrs=cdrs)
         cards      = summary_cards_html(summary)
         total      = summary["total"]
         high_ct    = len(summary["by_risk"].get("high", []))
@@ -1459,16 +1717,6 @@ def build_html_report(sequences: list, title: str = "Protein Sequence Liability 
             if high_ct > 0
             else "✅  No high-risk liabilities detected."
         )
-
-        # Structure-specific columns header
-        struct_th = ""
-        if has_struct:
-            struct_th = (
-                "<th>Sec. Structure</th>"
-                "<th>RSA</th>"
-                "<th>Exposure</th>"
-                "<th>Structural Note</th>"
-            )
 
         # HOS section for this sequence
         hos_html = ""
@@ -1495,13 +1743,23 @@ def build_html_report(sequences: list, title: str = "Protein Sequence Liability 
             </div>
 
             <div style="margin-bottom:24px">
-              <div style="font-weight:600;margin-bottom:10px;color:#1a1a2e">
+              <div style="font-weight:600;margin-bottom:6px;color:#1a1a2e">
                 Annotated Sequence
                 <span style="font-weight:400;font-size:0.8em;color:#888;margin-left:8px">
-                  (hover residues for details)
+                  CDR numbering: {CDR_SCHEME_LABELS.get(cdr_scheme, cdr_scheme)} &nbsp;·&nbsp; hover residues for details
                 </span>
               </div>
-              {('<div style="font-size:0.8em;color:#666;margin-bottom:8px">Row 1: sequence with liability highlights &nbsp;|&nbsp; Row 2: secondary structure &nbsp;|&nbsp; Row 3: RSA heatmap</div>') if has_struct else ''}
+              {f'<div class="cdr-legend">' + "".join(
+                  f'<span class="cdr-legend-item">'
+                  f'<span class="cdr-swatch" style="background:{CDR_COLORS[n][0]};border-color:{CDR_COLORS[n][1]}40"></span>'
+                  f'{n}</span>'
+                  for s, e, n in cdrs
+              ) + (
+                  '<span class="cdr-legend-item" style="color:#888">'
+                  '<span style="display:inline-block;width:20px;height:3px;background:#999;border-radius:2px;vertical-align:middle;margin-right:4px"></span>'
+                  'Liability (underline)</span>'
+              ) + '</div>' if cdrs else ''}
+              {('<div style="font-size:0.8em;color:#666;margin-bottom:6px">Row 1: CDR-annotated sequence &nbsp;|&nbsp; Row 2: secondary structure &nbsp;|&nbsp; Row 3: RSA heatmap</div>') if has_struct else ''}
               <div class="seq-block">{annotated}</div>
             </div>
 
@@ -1509,24 +1767,7 @@ def build_html_report(sequences: list, title: str = "Protein Sequence Liability 
               <div style="font-weight:600;margin-bottom:10px;color:#1a1a2e">
                 Liabilities Detail
               </div>
-              <div style="overflow-x:auto">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Pos.</th>
-                      <th>Residue(s)</th>
-                      <th>Category</th>
-                      <th>Risk</th>
-                      <th>Type</th>
-                      <th>Note</th>
-                      {struct_th}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {table_rows}
-                  </tbody>
-                </table>
-              </div>
+              {table_block}
             </div>
           </div>
         </div>
@@ -1546,7 +1787,7 @@ def build_html_report(sequences: list, title: str = "Protein Sequence Liability 
 <div class="page-wrap">
 
   <div class="report-header">
-    <h1>🔬 {title}</h1>
+    <h1><svg width="80" height="40" viewBox="0 0 80 40" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle;margin-right:14px;flex-shrink:0"><rect x="2" y="2" width="76" height="36" rx="18" ry="18" fill="none" stroke="rgba(255,255,255,0.88)" stroke-width="3"/><text x="40" y="27" text-anchor="middle" font-family="Futura,'Century Gothic','Trebuchet MS',sans-serif" font-size="19" font-weight="700" fill="rgba(255,255,255,0.92)" letter-spacing="1">LSC</text></svg>{title}</h1>
     <div class="subtitle">
       Post-translational modification risk &amp; sequence liability assessment
       {'— with Higher-Order Structure Analysis' if any(e.get('ss') is not None for e in sequences) else ''}
@@ -1598,6 +1839,76 @@ def build_html_report(sequences: list, title: str = "Protein Sequence Liability 
   </div>
 
 </div>
+
+<script>
+(function () {{
+  const RISK_ORDER = {{ high: 0, medium: 1, low: 2, info: 3 }};
+
+  function getVal(row, colIdx, type) {{
+    const text = (row.cells[colIdx] ? row.cells[colIdx].textContent.trim() : "");
+    if (type === "num")  return parseFloat(text) || 0;
+    if (type === "risk") return RISK_ORDER[row.dataset.risk] ?? 9;
+    return text.toLowerCase();
+  }}
+
+  window.tblSort = function (tableId, colIdx, type) {{
+    const tbl  = document.getElementById(tableId);
+    const head = tbl.querySelectorAll("thead th")[colIdx];
+    const asc  = head.dataset.dir !== "asc";
+    tbl.querySelectorAll("thead th").forEach(th => {{
+      th.dataset.dir = "";
+      th.classList.remove("sort-asc", "sort-desc");
+    }});
+    head.dataset.dir = asc ? "asc" : "desc";
+    head.classList.add(asc ? "sort-asc" : "sort-desc");
+    const tbody = tbl.querySelector("tbody");
+    Array.from(tbody.querySelectorAll("tr"))
+      .sort((a, b) => {{
+        const diff = (getVal(a, colIdx, type) > getVal(b, colIdx, type) ? 1 : -1);
+        return asc ? diff : -diff;
+      }})
+      .forEach(r => tbody.appendChild(r));
+    updateCount(tableId);
+  }};
+
+  window.tblFilter = function (tableId) {{
+    const ctrl    = document.getElementById("ctrl-" + tableId);
+    const query   = ctrl.querySelector(".tbl-search").value.toLowerCase();
+    const risk    = ctrl.querySelector(".tbl-risk-filter").value;
+    const cdrSel  = ctrl.querySelector(".tbl-cdr-filter");
+    const cdrVal  = cdrSel ? cdrSel.value : "";
+    document.getElementById(tableId).querySelectorAll("tbody tr").forEach(row => {{
+      const matchQ   = !query  || row.textContent.toLowerCase().includes(query);
+      const matchR   = !risk   || row.dataset.risk === risk;
+      const matchCDR = !cdrVal || row.dataset.cdr  === cdrVal;
+      row.style.display = (matchQ && matchR && matchCDR) ? "" : "none";
+    }});
+    updateCount(tableId);
+  }};
+
+  function updateCount(tableId) {{
+    const tbl     = document.getElementById(tableId);
+    const all     = tbl.querySelectorAll("tbody tr").length;
+    const visible = tbl.querySelectorAll("tbody tr:not([style*='display: none']):not([style*='display:none'])").length;
+    const el      = document.getElementById("count-" + tableId);
+    if (el) el.textContent = visible < all ? visible + " of " + all + " findings" : all + " findings";
+  }}
+
+  // Wire sortable headers and initialise counts
+  document.addEventListener("DOMContentLoaded", function () {{
+    document.querySelectorAll("th.sortable").forEach(function (th) {{
+      th.addEventListener("click", function () {{
+        const tbl = th.closest("table");
+        const idx = Array.from(tbl.querySelectorAll("thead th")).indexOf(th);
+        tblSort(tbl.id, idx, th.dataset.type || "str");
+      }});
+    }});
+    document.querySelectorAll("table[id^='liab-tbl-']").forEach(function (t) {{
+      updateCount(t.id);
+    }});
+  }});
+}}());
+</script>
 </body>
 </html>"""
 
@@ -1760,7 +2071,8 @@ def run_structure_analysis_pdb(pdb_text: str, seq: str,
     atoms = parse_pdb_atoms(pdb_text, chain_id=chain_id)
     if not atoms:
         print("  [Warning] No ATOM records found in PDB. Falling back to sequence prediction.")
-        return run_structure_analysis_sequence(seq, verbose)
+        ss, rsa, src = run_structure_analysis_sequence(seq, verbose)
+        return ss, rsa, src, {}
     if verbose:
         print(f"done  ({len(atoms)} heavy atoms)")
 
@@ -1775,7 +2087,8 @@ def run_structure_analysis_pdb(pdb_text: str, seq: str,
             f"  [Warning] Low sequence match ({match_pct:.1f}%).  "
             "Check --chain argument.  Falling back to sequence-based prediction."
         )
-        return run_structure_analysis_sequence(seq, verbose)
+        ss, rsa, src = run_structure_analysis_sequence(seq, verbose)
+        return ss, rsa, src, {}
 
     # Secondary structure from HELIX/SHEET records
     if verbose:
@@ -1817,7 +2130,7 @@ def run_structure_analysis_pdb(pdb_text: str, seq: str,
         f"PDB structure — HELIX/SHEET records (secondary structure) + "
         f"Shrake-Rupley SASA, probe=1.4 Å (solvent exposure)"
     )
-    return ss, rsa, source
+    return ss, rsa, source, seq_to_pdb
 
 
 def process_sequences(pairs: list, pdb_text: Optional[str] = None,
@@ -1843,24 +2156,378 @@ def process_sequences(pairs: list, pdb_text: Optional[str] = None,
         # Run structure analysis if requested
         if run_hos or pdb_text is not None:
             if pdb_text is not None:
-                ss, rsa, source = run_structure_analysis_pdb(
+                ss, rsa, source, seq_to_pdb = run_structure_analysis_pdb(
                     pdb_text, seq, chain_id=chain_id, verbose=verbose
                 )
             else:
                 ss, rsa, source = run_structure_analysis_sequence(seq, verbose=verbose)
+                seq_to_pdb = {}
 
             add_structural_context(findings, ss, rsa, source=source)
-            entry["ss"]        = ss
-            entry["rsa"]       = rsa
-            entry["hos_stats"] = hos_stats(ss, rsa)
+            entry["ss"]         = ss
+            entry["rsa"]        = rsa
+            entry["hos_stats"]  = hos_stats(ss, rsa)
             entry["hos_source"] = source
+            entry["seq_to_pdb"] = seq_to_pdb
 
         results.append(entry)
     return results
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 14. MAIN ENTRY POINT
+# 14. 3D VIEWER HTML GENERATOR
+# ══════════════════════════════════════════════════════════════════════════════
+
+def generate_3d_viewer_html(results: list, pdb_text: Optional[str],
+                             cdr_scheme: str = "kabat",
+                             title: str = "3D Structure") -> str:
+    """
+    Generate a standalone HTML page for 3D structure visualisation using 3Dmol.js.
+    Liabilities are shown as coloured spheres; CDR loops are highlighted on the
+    cartoon backbone.  The 3Dmol.js library (~2 MB) is loaded from the CDN on
+    demand — no data is transmitted from the browser.
+    """
+    if not pdb_text:
+        return ("<html><body style='font-family:sans-serif;padding:40px'>"
+                "<h2>No PDB structure available.</h2>"
+                "<p>Load a PDB file in the Analysis Setup tab and re-run.</p>"
+                "</body></html>")
+
+    # ── Build highlights and CDR region data ─────────────────────────────────
+    all_highlights: list = []
+    all_cdr_regions: list = []
+
+    RISK_HEX = {"high": "#e74c3c", "medium": "#e67e22",
+                "low": "#27ae60",  "info":   "#7cc4ff"}
+    SS_LABEL = {"H": "Helix", "E": "Sheet", "T": "Turn", "C": "Coil"}
+
+    for entry in results:
+        seq        = entry["seq"]
+        findings   = entry["findings"]
+        seq_name   = entry["name"]
+        seq_to_pdb = entry.get("seq_to_pdb", {})
+
+        cdrs        = annotate_cdrs(seq, scheme=cdr_scheme)
+        cdr_pos     = cdr_map(cdrs, len(seq))
+
+        # CDR cartoon bands
+        for cdr_s, cdr_e, cdr_name in cdrs:
+            chain_ids: dict = {}
+            for i in range(cdr_s, cdr_e):
+                if i in seq_to_pdb:
+                    ch, rn = seq_to_pdb[i]
+                    chain_ids.setdefault(ch, []).append(rn)
+            cdr_color = CDR_COLORS.get(cdr_name, ("#cccccc", "#333"))[0]
+            for ch, residues in chain_ids.items():
+                all_cdr_regions.append({
+                    "name": cdr_name, "chain": ch,
+                    "residues": residues, "color": cdr_color,
+                })
+
+        # Liability spheres
+        seen: set = set()
+        for f in findings:
+            pos0 = f["pos0"]
+            if pos0 not in seq_to_pdb:
+                continue
+            ch, rn   = seq_to_pdb[pos0]
+            key      = f"{ch}:{rn}"
+            aa       = seq[pos0] if pos0 < len(seq) else "?"
+            risk     = f.get("risk", "info")
+            cdr_name = cdr_pos[pos0] if pos0 < len(cdr_pos) else None
+            rsa_val  = f.get("rsa", None)
+            short    = f.get("short", "")
+            label    = f"{aa}{rn} {short}" + (f" [{cdr_name}]" if cdr_name else "")
+            cdr_col  = CDR_COLORS.get(cdr_name, ("#95a5a6","#333"))[0] if cdr_name else "#95a5a6"
+
+            if key in seen:
+                # Merge label onto existing entry
+                existing = next((h for h in all_highlights if h["key"] == key), None)
+                if existing and short not in existing["label"]:
+                    existing["label"] += f"/{short}"
+                continue
+            seen.add(key)
+
+            all_highlights.append({
+                "key":      key,
+                "name":     seq_name,
+                "chain":    ch,
+                "resi":     rn,
+                "risk":     risk,
+                "riskColor": RISK_HEX.get(risk, "#95a5a6"),
+                "short":    short,
+                "category": f.get("category", ""),
+                "aa":       aa,
+                "cdr":      cdr_name,
+                "cdrColor": cdr_col,
+                "ss":       SS_LABEL.get(f.get("ss", "C") or "C", "—"),
+                "rsa":      round(rsa_val * 100) if rsa_val is not None else None,
+                "exposure": f.get("exposure_class", "—") or "—",
+                "label":    label,
+            })
+
+    # ── Escape PDB text for JS template literal ───────────────────────────────
+    pdb_js = pdb_text.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+
+    data_js = json.dumps({
+        "title":       title,
+        "cdrScheme":   CDR_SCHEME_LABELS.get(cdr_scheme, cdr_scheme),
+        "highlights":  all_highlights,
+        "cdrRegions":  all_cdr_regions,
+    }, ensure_ascii=False)
+
+    # ── LSC logo SVG (white on dark, Futura-style) ────────────────────────────
+    logo_svg = (
+        '<svg width="56" height="28" viewBox="0 0 56 28" xmlns="http://www.w3.org/2000/svg">'
+        '<rect x="1.5" y="1.5" width="53" height="25" rx="12.5" ry="12.5" fill="none" '
+        'stroke="rgba(255,255,255,0.8)" stroke-width="2"/>'
+        '<text x="28" y="19" text-anchor="middle" '
+        'font-family="Futura,\'Century Gothic\',\'Trebuchet MS\',sans-serif" '
+        'font-size="13" font-weight="700" fill="rgba(255,255,255,0.88)" letter-spacing="1">'
+        'LSC</text></svg>'
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>{title} — 3D Viewer</title>
+<style>
+*,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0b1020;color:#e8edf7;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;
+     display:flex;flex-direction:column;height:100vh;overflow:hidden}}
+#hdr{{background:#131a2b;border-bottom:1px solid #2b3550;padding:8px 16px;
+      display:flex;align-items:center;gap:12px;flex-shrink:0}}
+#hdr-title{{font-weight:700;font-size:1em;color:#e8edf7}}
+#hdr-meta{{font-size:0.78em;color:#5c6f8a;margin-left:4px}}
+#hdr-scheme{{margin-left:auto;font-size:0.75em;background:rgba(124,196,255,0.08);
+             color:#7cc4ff;padding:2px 9px;border-radius:10px;font-weight:600}}
+#ctrl{{background:#131a2b;border-bottom:1px solid #2b3550;padding:7px 14px;
+       display:flex;flex-wrap:wrap;gap:10px;align-items:center;flex-shrink:0;font-size:0.8em}}
+.ctrl-lbl{{color:#7cc4ff;font-weight:700;margin-right:2px}}
+.ctrl-grp{{display:flex;align-items:center;gap:6px}}
+label.rl{{display:flex;align-items:center;gap:3px;color:#e8edf7;cursor:pointer}}
+input[type=radio],input[type=checkbox]{{accent-color:#7cc4ff}}
+.ctrl-sep{{color:#2b3550;font-size:1.2em}}
+#viewer-wrap{{flex:1;position:relative;overflow:hidden;min-height:0}}
+#viewer{{position:absolute;inset:0}}
+#gate{{position:absolute;inset:0;display:flex;flex-direction:column;
+       align-items:center;justify-content:center;gap:16px;background:#0b1020;z-index:10}}
+#gate h2{{font-size:1.1em;color:#e8edf7}}
+#gate p{{font-size:0.85em;color:#aab6cf;max-width:400px;text-align:center;line-height:1.6}}
+#gate-warn{{font-size:0.8em;color:#e74c3c;font-weight:600}}
+#load-btn{{background:rgba(124,196,255,0.1);color:#7cc4ff;border:1px solid #7cc4ff;
+           border-radius:10px;padding:10px 28px;cursor:pointer;font-size:0.95em;
+           font-weight:700;font-family:inherit;transition:opacity .15s}}
+#load-btn:hover:not(:disabled){{opacity:0.8}}
+#load-btn:disabled{{opacity:0.45;cursor:wait}}
+#legend{{background:#131a2b;border-top:1px solid #2b3550;padding:6px 14px;
+         display:flex;gap:16px;align-items:center;flex-shrink:0;flex-wrap:wrap;font-size:0.75em}}
+.leg-item{{display:flex;align-items:center;gap:5px;color:#aab6cf}}
+.leg-dot{{width:10px;height:10px;border-radius:50%;display:inline-block;flex-shrink:0}}
+</style>
+</head>
+<body>
+
+<div id="hdr">
+  {logo_svg}
+  <div>
+    <span id="hdr-title">{title}</span>
+    <span id="hdr-meta"></span>
+  </div>
+  <span id="hdr-scheme">CDR: {CDR_SCHEME_LABELS.get(cdr_scheme, cdr_scheme)}</span>
+</div>
+
+<div id="ctrl">
+  <span class="ctrl-lbl">Color by:</span>
+  <div class="ctrl-grp">
+    <label class="rl"><input type="radio" name="colorBy" value="risk" checked> Risk</label>
+    <label class="rl"><input type="radio" name="colorBy" value="cdr"> CDR</label>
+    <label class="rl"><input type="radio" name="colorBy" value="aa"> Amino acid</label>
+    <label class="rl"><input type="radio" name="colorBy" value="ss"> Sec. structure</label>
+  </div>
+  <span class="ctrl-sep">|</span>
+  <span class="ctrl-lbl">Show:</span>
+  <div class="ctrl-grp" id="risk-filter">
+    <label class="rl"><input type="radio" name="filterRisk" value="all" checked> All</label>
+    <label class="rl"><input type="radio" name="filterRisk" value="high"> High</label>
+    <label class="rl"><input type="radio" name="filterRisk" value="medium"> Med</label>
+    <label class="rl"><input type="radio" name="filterRisk" value="low"> Low</label>
+  </div>
+  <span class="ctrl-sep">|</span>
+  <label class="rl"><input type="checkbox" id="chk-surface"> Surface</label>
+  <label class="rl"><input type="checkbox" id="chk-labels"> Labels</label>
+  <label class="rl"><input type="checkbox" id="chk-cdrcartoon" checked> CDR cartoon</label>
+</div>
+
+<div id="viewer-wrap">
+  <div id="viewer"></div>
+  <div id="gate">
+    <h2>3D Viewer — 3Dmol.js required</h2>
+    <p>The viewer uses <b style="color:#7cc4ff">3Dmol.js</b>, a WebGL molecular
+       rendering library (~2 MB). Your structure and sequence data never leave your browser.</p>
+    <button id="load-btn" onclick="loadDmol()">Load 3D Viewer</button>
+    <span id="gate-warn" style="display:none">Failed to load — check your connection and retry.</span>
+  </div>
+</div>
+
+<div id="legend"></div>
+
+<script>
+const DATA = {data_js};
+const PDB_TEXT = `{pdb_js}`;
+
+const RISK_HEX  = {{high:'#e74c3c', medium:'#e67e22', low:'#27ae60', info:'#7cc4ff'}};
+const SS_HEX    = {{Helix:'#2196f3', Sheet:'#4caf50', Turn:'#ff9800', Coil:'#90a4ae'}};
+const AA_HEX    = {{}};
+for(const aa of 'FYW')     AA_HEX[aa]='#9b59b6';
+for(const aa of 'KRH')     AA_HEX[aa]='#2980b9';
+for(const aa of 'DE')      AA_HEX[aa]='#e74c3c';
+for(const aa of 'STNQC')   AA_HEX[aa]='#27ae60';
+for(const aa of 'AVLIMPG') AA_HEX[aa]='#e67e22';
+
+let viewer = null;
+let colorBy   = 'risk';
+let filterRisk= 'all';
+let showSurf  = false;
+let showLbls  = false;
+let showCDR   = true;
+
+function getColor(h) {{
+  if (colorBy==='risk')   return RISK_HEX[h.risk]||'#95a5a6';
+  if (colorBy==='cdr')    return h.cdr ? h.cdrColor : '#5c6f8a';
+  if (colorBy==='aa')     return AA_HEX[h.aa]||'#95a5a6';
+  if (colorBy==='ss')     return SS_HEX[h.ss]||'#95a5a6';
+  return '#7cc4ff';
+}}
+
+function updateLegend() {{
+  const leg = document.getElementById('legend');
+  let items = [];
+  if (colorBy==='risk') {{
+    items = [['#e74c3c','High'],['#e67e22','Medium'],['#27ae60','Low'],['#7cc4ff','Info']];
+  }} else if (colorBy==='cdr') {{
+    const cdrs = [...new Set(DATA.highlights.filter(h=>h.cdr).map(h=>h.cdr))];
+    cdrs.forEach(c => {{
+      const h = DATA.highlights.find(h=>h.cdr===c);
+      items.push([h.cdrColor, c]);
+    }});
+    items.push(['#5c6f8a','Framework']);
+  }} else if (colorBy==='aa') {{
+    items = [['#9b59b6','Aromatic F/Y/W'],['#2980b9','+ charged K/R/H'],
+             ['#e74c3c','− charged D/E'],['#27ae60','Polar S/T/N/Q/C'],
+             ['#e67e22','Nonpolar A/V/L/I/M/P/G']];
+  }} else if (colorBy==='ss') {{
+    items = [['#2196f3','Helix'],['#4caf50','Sheet'],['#ff9800','Turn/Coil']];
+  }}
+  leg.innerHTML = '<span style="color:#5c6f8a;font-weight:700;font-size:0.74em">LEGEND:</span>' +
+    items.map(([c,l])=>
+      `<span class="leg-item"><span class="leg-dot" style="background:${{c}}"></span>${{l}}</span>`
+    ).join('');
+}}
+
+function render() {{
+  if (!viewer) return;
+  viewer.removeAllModels();
+  viewer.removeAllSurfaces();
+  viewer.removeAllLabels();
+
+  viewer.addModel(PDB_TEXT, 'pdb');
+  // Base cartoon — muted grey
+  viewer.setStyle({{}}, {{cartoon:{{color:'#5c6f8a', opacity:0.82, thickness:0.3}}}});
+
+  // CDR cartoon overlay
+  if (showCDR) {{
+    DATA.cdrRegions.forEach(r => {{
+      viewer.addStyle(
+        {{chain:r.chain, resi:r.residues}},
+        {{cartoon:{{color:r.color, opacity:0.95, thickness:0.45}}}}
+      );
+    }});
+  }}
+
+  // Liability spheres
+  DATA.highlights.forEach(h => {{
+    if (filterRisk!=='all' && h.risk!==filterRisk) return;
+    const col = getColor(h);
+    viewer.addStyle(
+      {{chain:h.chain, resi:[h.resi], atom:'CA'}},
+      {{sphere:{{color:col, radius:1.4, opacity:0.92}}}}
+    );
+    if (showLbls) {{
+      viewer.addLabel(h.label, {{
+        position:{{chain:h.chain, resi:h.resi, atom:'CA'}},
+        backgroundColor:'#0b1020', backgroundOpacity:0.75,
+        fontColor:col, fontSize:10,
+        borderColor:col, borderThickness:1,
+      }}, {{chain:h.chain, resi:[h.resi], atom:'CA'}});
+    }}
+  }});
+
+  if (showSurf) {{
+    viewer.addSurface(window.$3Dmol.SurfaceType.SAS,
+      {{opacity:0.28, colorscheme:{{gradient:'rwb',min:-1,max:1}}}}, {{}});
+  }}
+
+  viewer.zoomTo();
+  viewer.render();
+  updateLegend();
+}}
+
+function loadDmol() {{
+  const btn = document.getElementById('load-btn');
+  btn.disabled = true;
+  btn.textContent = 'Loading 3Dmol.js…';
+  const s = document.createElement('script');
+  s.src = 'https://3dmol.org/build/3Dmol-min.js';
+  s.onload = () => {{
+    document.getElementById('gate').style.display = 'none';
+    viewer = window.$3Dmol.createViewer(
+      document.getElementById('viewer'),
+      {{backgroundColor:'#0b1020', antialias:true}}
+    );
+    // Update header meta
+    const n = DATA.highlights.length;
+    document.getElementById('hdr-meta').textContent =
+      ` · ${{n}} liabilit${{n===1?'y':'ies'}} mapped`;
+    render();
+  }};
+  s.onerror = () => {{
+    btn.disabled = false;
+    btn.textContent = 'Retry';
+    document.getElementById('gate-warn').style.display = '';
+  }};
+  document.head.appendChild(s);
+}}
+
+// Control wiring
+document.querySelectorAll('input[name=colorBy]').forEach(el =>
+  el.addEventListener('change', () => {{ colorBy=el.value; render(); }}));
+document.querySelectorAll('input[name=filterRisk]').forEach(el =>
+  el.addEventListener('change', () => {{ filterRisk=el.value; render(); }}));
+document.getElementById('chk-surface').addEventListener('change', e =>
+  {{ showSurf=e.target.checked; render(); }});
+document.getElementById('chk-labels').addEventListener('change', e =>
+  {{ showLbls=e.target.checked; render(); }});
+document.getElementById('chk-cdrcartoon').addEventListener('change', e =>
+  {{ showCDR=e.target.checked; render(); }});
+
+// Hide risk filter when irrelevant coloring mode selected
+document.querySelectorAll('input[name=colorBy]').forEach(el =>
+  el.addEventListener('change', () => {{
+    document.getElementById('risk-filter').style.opacity =
+      (colorBy==='risk') ? '1' : '0.3';
+  }}));
+
+updateLegend();
+</script>
+</body>
+</html>"""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 15. MAIN ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():

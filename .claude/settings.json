@@ -12,7 +12,12 @@
       "Bash(chmod +x /Users/sletarte/Documents/Documents/Consulting/Code/build/build_mac.sh)",
       "Bash(python3 -m PyInstaller --clean protein_liability.spec)",
       "Bash(python3 -m PyInstaller --clean -y protein_liability.spec)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(python3 -c \"import protein_liability_analyzer_v2; print\\('OK'\\)\")",
+      "Bash(python3 -c \"import protein_liability_analyzer_v2; print\\('HTML module OK'\\)\")",
+      "Bash(python3 -c \"import ast, sys; ast.parse\\(open\\('/Users/sletarte/Documents/Documents/Consulting/Code/protein_liability_gui_autohos.py'\\).read\\(\\)\\); print\\('GUI syntax OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('/Users/sletarte/Documents/Documents/Consulting/Code/protein_liability_gui_autohos.py'\\).read\\(\\)\\); print\\('GUI OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('/Users/sletarte/Documents/Documents/Consulting/Code/protein_liability_gui_autohos.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
     ]
   }
 }

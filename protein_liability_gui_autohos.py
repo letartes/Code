@@ -16,6 +16,8 @@ Requires protein_liability_analyzer_v2.py in the same folder.
 All computation is local - sequences never transmitted.
 """
 
+import re
+import math
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import threading
@@ -80,6 +82,261 @@ class _QWriter:
     def flush(self): pass
 
 
+# ── Risk rank helper ──────────────────────────────────────────────────────────
+def _risk_rank(level: str) -> int:
+    return {"high": 0, "medium": 1, "low": 2, "info": 3}.get(level, 4)
+
+
+# ── Pure-tkinter 3D molecular viewer ─────────────────────────────────────────
+class Mol3DCanvas(tk.Canvas):
+    """
+    Software-rendered 3D Cα-trace viewer — no external dependencies.
+    Draws backbone as connected lines with coloured spheres (ovals) for
+    liability residues. Supports drag-to-rotate and scroll-to-zoom.
+    """
+
+    _CHAIN_COLORS = [
+        "#4a90d9", "#e67e22", "#2ecc71", "#9b59b6",
+        "#e74c3c", "#1abc9c", "#f39c12", "#3498db",
+    ]
+    _RISK_COLORS = {
+        "high":   "#e74c3c",
+        "medium": "#f39c12",
+        "low":    "#3498db",
+        "info":   "#95a5a6",
+    }
+    _CDR_COLORS_3D = {
+        "CDR-H1": "#6ab0f5", "CDR-H2": "#f5c842", "CDR-H3": "#f07070",
+        "CDR-L1": "#6fcf97", "CDR-L2": "#f5c842", "CDR-L3": "#f07070",
+    }
+    _AA_COLORS = {
+        "A": "#e8a87c", "V": "#e8a87c", "I": "#e8a87c", "L": "#e8a87c",
+        "M": "#e8a87c", "F": "#d4956a", "W": "#d4956a", "P": "#e8a87c",
+        "S": "#88d8a3", "T": "#88d8a3", "C": "#f5e642", "Y": "#88d8a3",
+        "N": "#88d8a3", "Q": "#88d8a3",
+        "D": "#e07070", "E": "#e07070", "K": "#70a0e0", "R": "#70a0e0",
+        "H": "#9b80d0", "G": "#cccccc",
+    }
+    _SS_COLORS = {"H": "#e74c3c", "E": "#3498db"}
+
+    def __init__(self, parent, **kwargs):
+        kwargs.setdefault("bg", DARK)
+        kwargs.setdefault("highlightthickness", 0)
+        super().__init__(parent, **kwargs)
+        self._atoms: list      = []
+        self._bonds: list      = []
+        self._rot              = [[1.0, 0.0, 0.0],
+                                  [0.0, 1.0, 0.0],
+                                  [0.0, 0.0, 1.0]]
+        self._scale            = 4.0
+        self._drag_start       = None
+        self._color_mode       = "risk"
+        self._show_labels      = True
+        self._show_cdr         = False
+        self._risk_filter: set = {"high", "medium", "low", "info"}
+
+        self.bind("<ButtonPress-1>", self._on_press)
+        self.bind("<B1-Motion>",     self._on_drag)
+        self.bind("<MouseWheel>",    self._on_scroll_mac)
+        self.bind("<Button-4>",      lambda _: self._zoom(1.1))
+        self.bind("<Button-5>",      lambda _: self._zoom(0.9))
+        self.bind("<Configure>",     lambda _: self._redraw())
+        self._draw_placeholder()
+
+    # ── Public API ────────────────────────────────────────────────────────────
+    def load(self, atoms: list, bonds: list):
+        self._atoms = atoms
+        self._bonds = bonds
+        if atoms:
+            max_r = max(math.sqrt(sum(v * v for v in a["xyz"])) for a in atoms)
+            w = max(self.winfo_width(), 200)
+            h = max(self.winfo_height(), 200)
+            self._scale = min(w, h) * 0.38 / max(max_r, 1.0)
+        self._rot = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        self._redraw()
+
+    def clear(self):
+        self._atoms = []
+        self._bonds = []
+        self.delete("all")
+        self._draw_placeholder()
+
+    def set_color_mode(self, mode: str):
+        self._color_mode = mode
+        self._redraw()
+
+    def set_show_labels(self, val: bool):
+        self._show_labels = val
+        self._redraw()
+
+    def set_show_cdr(self, val: bool):
+        self._show_cdr = val
+        self._redraw()
+
+    def set_risk_filter(self, risks: set):
+        self._risk_filter = risks
+        self._redraw()
+
+    def reset_view(self):
+        self._rot = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        if self._atoms:
+            max_r = max(math.sqrt(sum(v * v for v in a["xyz"])) for a in self._atoms)
+            w = max(self.winfo_width(), 200)
+            h = max(self.winfo_height(), 200)
+            self._scale = min(w, h) * 0.38 / max(max_r, 1.0)
+        self._redraw()
+
+    # ── Projection ────────────────────────────────────────────────────────────
+    def _proj(self, xyz):
+        x, y, z = xyz
+        r = self._rot
+        px = r[0][0]*x + r[0][1]*y + r[0][2]*z
+        py = r[1][0]*x + r[1][1]*y + r[1][2]*z
+        pz = r[2][0]*x + r[2][1]*y + r[2][2]*z
+        w = max(self.winfo_width(),  1)
+        h = max(self.winfo_height(), 1)
+        return w/2 + px * self._scale, h/2 - py * self._scale, pz
+
+    # ── Color resolution ──────────────────────────────────────────────────────
+    def _atom_color(self, atom: dict) -> str:
+        mode = self._color_mode
+        if mode == "chain":
+            ci = ord(atom["chain"]) % len(self._CHAIN_COLORS) if atom["chain"] else 0
+            return self._CHAIN_COLORS[ci]
+        if mode == "cdr":
+            return atom.get("color_cdr") or "#4a6fa5"
+        if mode == "aa":
+            return self._AA_COLORS.get(atom.get("aa", "G"), "#aaaaaa")
+        if mode == "ss":
+            return self._SS_COLORS.get(atom.get("ss_char", ""), "#666688")
+        # default: "risk"
+        if atom.get("is_liability"):
+            return self._RISK_COLORS.get(atom.get("hl_risk", "info"), "#95a5a6")
+        return "#4a6fa5"
+
+    # ── Rendering ─────────────────────────────────────────────────────────────
+    def _redraw(self):
+        self.delete("all")
+        if not self._atoms:
+            self._draw_placeholder()
+            return
+
+        projected = [self._proj(a["xyz"]) for a in self._atoms]
+
+        # Bonds — sorted back-to-front for painter's algorithm
+        bond_list = []
+        for i, j in self._bonds:
+            x1, y1, z1 = projected[i]
+            x2, y2, z2 = projected[j]
+            col_i = self._atom_color(self._atoms[i])
+            col_j = self._atom_color(self._atoms[j])
+            col = col_i if z1 >= z2 else col_j
+            if col == "#4a6fa5":
+                col = "#2a4070"
+            bond_list.append(((z1 + z2) / 2, x1, y1, x2, y2, col))
+        bond_list.sort(key=lambda t: t[0])
+        for _, x1, y1, x2, y2, col in bond_list:
+            self.create_line(x1, y1, x2, y2, fill=col, width=2, tags="bond")
+
+        # Atoms — back-to-front
+        order = sorted(range(len(self._atoms)), key=lambda k: projected[k][2])
+        for k in order:
+            a = self._atoms[k]
+            sx, sy, _ = projected[k]
+            is_hl = a.get("is_liability", False)
+            risk   = a.get("hl_risk", "")
+
+            if is_hl and risk not in self._risk_filter:
+                # Suppressed by filter — draw tiny dim dot
+                self.create_oval(sx-2, sy-2, sx+2, sy+2,
+                                 fill="#334466", outline="", tags="atom")
+                continue
+
+            color = self._atom_color(a)
+
+            if is_hl:
+                r = float(a.get("hl_size", 8))
+                self.create_oval(sx-r, sy-r, sx+r, sy+r,
+                                 fill=color, outline="#ffffff", width=1.5,
+                                 tags="atom_hl")
+                if self._show_labels and a.get("hl_label"):
+                    self.create_text(sx, sy - r - 5,
+                                     text=a["hl_label"], fill="#ffffff",
+                                     font=("Courier New", 8), tags="label")
+            else:
+                # CDR backbone highlight
+                if self._show_cdr and a.get("cdr_name"):
+                    cdr_col = self._CDR_COLORS_3D.get(a["cdr_name"], "#888888")
+                    self.create_oval(sx-4, sy-4, sx+4, sy+4,
+                                     fill=cdr_col, outline="", tags="atom_cdr")
+                else:
+                    self.create_oval(sx-2.5, sy-2.5, sx+2.5, sy+2.5,
+                                     fill=color, outline="", tags="atom")
+
+        # CDR legend strip
+        if self._show_cdr:
+            self._draw_cdr_legend()
+
+    def _draw_cdr_legend(self):
+        present = {}
+        for a in self._atoms:
+            cdr = a.get("cdr_name")
+            if cdr:
+                present[cdr] = self._CDR_COLORS_3D.get(cdr, "#888888")
+        if not present:
+            return
+        h = max(self.winfo_height(), 100)
+        x, y = 10, h - 22
+        self.create_text(x, y, text="CDR:", fill="#8899bb",
+                         font=("Segoe UI", 8), anchor="w", tags="legend")
+        x += 38
+        for name in sorted(present):
+            col = present[name]
+            self.create_rectangle(x, y-6, x+10, y+6, fill=col, outline="", tags="legend")
+            self.create_text(x + 14, y, text=name, fill="#ccccdd",
+                             font=("Segoe UI", 8), anchor="w", tags="legend")
+            x += 62
+
+    def _draw_placeholder(self):
+        w = max(self.winfo_width(),  400)
+        h = max(self.winfo_height(), 300)
+        self.create_text(w // 2, h // 2,
+                         text="Run an analysis with a PDB file\nto enable 3D structure visualization",
+                         fill="#445588", font=("Segoe UI", 13), justify="center")
+
+    # ── Interaction ───────────────────────────────────────────────────────────
+    def _on_press(self, event):
+        self._drag_start = (event.x, event.y)
+
+    def _on_drag(self, event):
+        if not self._drag_start:
+            return
+        dx = event.x - self._drag_start[0]
+        dy = event.y - self._drag_start[1]
+        self._drag_start = (event.x, event.y)
+        self._rotate(dy * 0.007, dx * 0.007)
+
+    def _rotate(self, ax: float, ay: float):
+        cx, sx = math.cos(ax), math.sin(ax)
+        cy, sy = math.cos(ay), math.sin(ay)
+        Rx = [[1, 0, 0], [0, cx, -sx], [0, sx, cx]]
+        Ry = [[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]]
+
+        def mm(A, B):
+            return [[sum(A[i][k] * B[k][j] for k in range(3))
+                     for j in range(3)] for i in range(3)]
+
+        self._rot = mm(Rx, mm(Ry, self._rot))
+        self._redraw()
+
+    def _zoom(self, factor: float):
+        self._scale *= factor
+        self._redraw()
+
+    def _on_scroll_mac(self, event):
+        self._zoom(1.1 if event.delta > 0 else 0.9)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 class App:
     def __init__(self, root: tk.Tk):
@@ -90,7 +347,7 @@ class App:
         self._centre(1040, 860)
 
         # State
-        self.v_mode     = tk.StringVar(value="paste")
+        self.v_mode     = tk.StringVar(value="file")
         self.v_fasta    = tk.StringVar()
         self.v_pdb      = tk.StringVar()
         self.v_chain    = tk.StringVar(value="")
@@ -98,6 +355,7 @@ class App:
         self.v_outname  = tk.StringVar(value="protein_liabilities")
         self.v_nohtml   = tk.BooleanVar(value=False)
         self.v_seqlen   = tk.StringVar(value="")
+        self.v_cdr_scheme = tk.StringVar(value="kabat")
         self.v_status   = tk.StringVar(value="Ready")
 
         # Report filter state
@@ -114,6 +372,11 @@ class App:
         self._rpt_all_rows: list = []
         self._rpt_sort_col  = None
         self._rpt_sort_rev  = False
+
+        # 3D viewer state
+        self._3d_results:   list         = []
+        self._3d_pdb_text:  str | None   = None
+        self._3d_chains:    list         = []
 
         self._build_styles()
         self._build_header()
@@ -170,9 +433,25 @@ class App:
         hdr.pack_propagate(False)
         inner = tk.Frame(hdr, bg=DARK)
         inner.pack(fill="both", expand=True, padx=20, pady=10)
-        tk.Label(inner, text="Protein Liability Analyzer  v2  -  Auto-HOS",
+
+        # LSC logo drawn with Canvas primitives (no image dependency)
+        lw, W, H, r, pad = 2, 74, 42, 19, 2
+        logo = tk.Canvas(inner, width=W, height=H, bg=DARK, highlightthickness=0)
+        logo.pack(side="left", padx=(0, 16))
+        logo.create_arc(pad, pad, pad + 2*r, H - pad,
+                        start=90, extent=180, style="arc", outline=WHITE, width=lw)
+        logo.create_arc(W - pad - 2*r, pad, W - pad, H - pad,
+                        start=-90, extent=180, style="arc", outline=WHITE, width=lw)
+        logo.create_line(pad + r, pad, W - pad - r, pad, fill=WHITE, width=lw)
+        logo.create_line(pad + r, H - pad, W - pad - r, H - pad, fill=WHITE, width=lw)
+        logo.create_text(W // 2, H // 2, text="LSC", fill=WHITE,
+                         font=("Futura", 17, "bold"))
+
+        text_frame = tk.Frame(inner, bg=DARK)
+        text_frame.pack(side="left")
+        tk.Label(text_frame, text="Protein Liability Analyzer  v2  -  Auto-HOS",
                  bg=DARK, fg=WHITE, font=F_TITLE).pack(anchor="w")
-        tk.Label(inner,
+        tk.Label(text_frame,
                  text="HOS always performed  ·  Letarte Scientific Consulting  ·  "
                       "All computation local - sequences never transmitted",
                  bg=DARK, fg="#7788aa", font=("Segoe UI", 8)).pack(anchor="w")
@@ -184,12 +463,15 @@ class App:
         t1 = ttk.Frame(self.nb)
         t2 = ttk.Frame(self.nb)
         t3 = ttk.Frame(self.nb)
+        t4 = ttk.Frame(self.nb)
         self.nb.add(t1, text="  Analysis Setup  ")
         self.nb.add(t2, text="  Results & Log  ")
         self.nb.add(t3, text="  Report  ")
+        self.nb.add(t4, text="  3D Structure  ")
         self._build_setup(t1)
         self._build_results(t2)
         self._build_report(t3)
+        self._build_3d_tab(t4)
 
     # ── Card helper ───────────────────────────────────────────────────────────
     def _card(self, parent, title, builder):
@@ -321,8 +603,20 @@ class App:
         tk.Label(ch_row, text="  Leave blank for automatic selection",
                  bg=WHITE, fg=GREY, font=F_SMALL).pack(side="left")
 
+        cdr_row = tk.Frame(p, bg=WHITE)
+        cdr_row.pack(fill="x", pady=(6, 2))
+        tk.Label(cdr_row, text="CDR scheme:", bg=WHITE, fg=DARK, font=F_BODY,
+                 width=13, anchor="w").pack(side="left")
+        for scheme, label in [("kabat", "Kabat"), ("chothia", "Chothia"), ("imgt", "IMGT")]:
+            tk.Radiobutton(
+                cdr_row, text=label, variable=self.v_cdr_scheme, value=scheme,
+                bg=WHITE, fg=DARK, font=F_BODY, activebackground=WHITE,
+            ).pack(side="left", padx=(0, 16))
+        tk.Label(cdr_row, text="(antibody V-domain sequences only)",
+                 bg=WHITE, fg=GREY, font=F_SMALL).pack(side="left")
+
         info = tk.Frame(p, bg="#e8f4fd")
-        info.pack(fill="x")
+        info.pack(fill="x", pady=(6, 0))
         tk.Label(info,
                  text="Supplying a PDB file upgrades the analysis from theoretical "
                       "(sequence-based) to experimental (structure-based) mode. "
@@ -543,9 +837,18 @@ class App:
         self._rpt_all_rows = []
         categories_seen = set()
 
+        cdr_scheme = self.v_cdr_scheme.get()
+
         for entry in results:
             name = entry["name"]
             seq  = entry["seq"]
+
+            # Build per-position CDR map for this chain
+            cdrs      = pla.annotate_cdrs(seq, scheme=cdr_scheme)
+            cdr_at    = {}
+            for s, e, cdr_name in cdrs:
+                for i in range(s, e):
+                    cdr_at[i] = cdr_name
 
             for f in entry["findings"]:
                 pos0  = f.get("pos0", 0)
@@ -561,7 +864,12 @@ class App:
 
                 category  = f.get("category", "")
                 risk_key  = f.get("risk", "info").lower()
-                type_lbl  = f.get("label", f.get("type", ""))
+                base_lbl  = re.sub(
+                    r'\s*[–—-]\s*(High|Medium|Low|Info)\s*Risk\s*',
+                    ' ', f.get("label", f.get("type", ""))
+                ).strip()
+                cdr_name  = cdr_at.get(pos0)
+                type_lbl  = f"{base_lbl} · {cdr_name}" if cdr_name else base_lbl
                 note      = f.get("note", "") or ""
 
                 categories_seen.add(category)
@@ -914,6 +1222,7 @@ class App:
             if pf and Path(pf).exists():
                 pdb_text = Path(pf).read_text(encoding="utf-8", errors="replace")
                 q.put(("cyan", f"  PDB loaded: {Path(pf).name}\n"))
+            self._3d_pdb_text = pdb_text   # stash for 3D tab
 
             chain_id = self.v_chain.get().strip() or None
             run_hos  = True   # always
@@ -938,7 +1247,9 @@ class App:
                 title     = ("Protein Sequence Liability Analysis + PDB Structure"
                              if pdb_text else
                              "Protein Sequence Liability Analysis + HOS Prediction")
-                html_content = pla.build_html_report(results, title=title)
+                html_content = pla.build_html_report(
+                    results, title=title,
+                    cdr_scheme=self.v_cdr_scheme.get())
                 html_path.write_text(html_content, encoding="utf-8")
                 q.put(("green", f"\n  Report saved -> {html_path}\n"))
 
@@ -952,6 +1263,321 @@ class App:
             self.root.after(0, self._fail, str(exc))
         finally:
             sys.stdout, sys.stderr = old_out, old_err
+
+    # ── 3D Structure tab ──────────────────────────────────────────────────────
+    def _build_3d_tab(self, parent):
+        """Inline 3D molecular viewer — pure tkinter, no external dependencies."""
+        # ── Top status bar ────────────────────────────────────────────────────
+        top = tk.Frame(parent, bg=ACCENT, padx=12, pady=6)
+        top.pack(fill="x")
+        tk.Label(top, text="3D Structure", bg=ACCENT, fg=WHITE,
+                 font=("Segoe UI", 11, "bold")).pack(side="left")
+        self._3d_status_var = tk.StringVar(value="Run an analysis with a PDB file to populate.")
+        tk.Label(top, textvariable=self._3d_status_var,
+                 bg=ACCENT, fg="#aabbff", font=F_SMALL).pack(side="right", padx=8)
+
+        # ── Body: controls | canvas ───────────────────────────────────────────
+        body = tk.Frame(parent, bg=DARK)
+        body.pack(fill="both", expand=True)
+
+        # Controls panel (left column)
+        ctrl = tk.Frame(body, bg=DARK, width=200)
+        ctrl.pack(side="left", fill="y")
+        ctrl.pack_propagate(False)
+
+        def _ch(txt, bold=False):
+            tk.Label(ctrl, text=txt, bg=DARK,
+                     fg="#aabbff" if bold else "#ccccdd",
+                     font=("Segoe UI", 9, "bold") if bold else ("Segoe UI", 9),
+                     anchor="w").pack(fill="x", padx=12, pady=(8 if bold else 1, 0))
+
+        def _sep():
+            tk.Frame(ctrl, bg="#2a3060", height=1).pack(fill="x", padx=8, pady=5)
+
+        _ch("COLOR MODE", bold=True)
+        self._3d_color_mode = tk.StringVar(value="risk")
+        for val, lbl in [("risk",  "By Risk"),
+                         ("chain", "By Chain"),
+                         ("aa",    "By AA Type"),
+                         ("ss",    "By Sec. Structure")]:
+            tk.Radiobutton(
+                ctrl, text=lbl, variable=self._3d_color_mode, value=val,
+                bg=DARK, fg="#ddddee", selectcolor=ACCENT2,
+                activebackground=DARK, activeforeground=WHITE,
+                font=("Segoe UI", 9), anchor="w",
+                command=self._on_3d_color_change,
+            ).pack(fill="x", padx=16, pady=1)
+
+        # Dynamic legend (populated by _update_3d_legend when mode is aa or ss)
+        self._3d_legend_frame = tk.Frame(ctrl, bg=DARK)
+        self._3d_legend_frame.pack(fill="x")
+
+        _sep()
+        _ch("RISK FILTER", bold=True)
+        self._3d_risk_vars: dict = {}
+        for risk, col in [("high",   "#e74c3c"), ("medium", "#f39c12"),
+                          ("low",    "#3498db"), ("info",   "#95a5a6")]:
+            v = tk.BooleanVar(value=True)
+            self._3d_risk_vars[risk] = v
+            tk.Checkbutton(
+                ctrl, text=risk.capitalize(), variable=v,
+                bg=DARK, fg=col, selectcolor=ACCENT,
+                activebackground=DARK, activeforeground=col,
+                font=("Segoe UI", 9, "bold"), anchor="w",
+                command=self._update_risk_filter,
+            ).pack(fill="x", padx=16, pady=1)
+
+        _sep()
+        _ch("DISPLAY", bold=True)
+        self._3d_labels_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            ctrl, text="Show labels", variable=self._3d_labels_var,
+            bg=DARK, fg="#ccccdd", selectcolor=ACCENT,
+            activebackground=DARK, activeforeground=WHITE,
+            font=("Segoe UI", 9), anchor="w",
+            command=lambda: self._mol_canvas.set_show_labels(
+                self._3d_labels_var.get()),
+        ).pack(fill="x", padx=16, pady=1)
+
+        _sep()
+        _reset_btn = tk.Label(
+            ctrl, text="Reset View", bg=ACCENT, fg=WHITE,
+            font=("Segoe UI", 9, "bold"), padx=8, pady=5, cursor="hand2",
+        )
+        _reset_btn.pack(fill="x", padx=12, pady=4)
+        _reset_btn.bind("<Button-1>", lambda _: self._mol_canvas.reset_view())
+        _reset_btn.bind("<Enter>",    lambda _: _reset_btn.configure(bg=ACCENT2))
+        _reset_btn.bind("<Leave>",    lambda _: _reset_btn.configure(bg=ACCENT))
+
+        _sep()
+        _ch("INTERACTION", bold=True)
+        tk.Label(ctrl, text="Drag  → rotate\nScroll → zoom",
+                 bg=DARK, fg="#667799", font=("Segoe UI", 8),
+                 justify="left").pack(anchor="w", padx=16, pady=2)
+
+        _sep()
+        _ch("RISK LEGEND", bold=True)
+        for risk, col in [("High",   "#e74c3c"), ("Medium", "#f39c12"),
+                          ("Low",    "#3498db"), ("Info",   "#95a5a6")]:
+            row = tk.Frame(ctrl, bg=DARK)
+            row.pack(fill="x", padx=16, pady=1)
+            dot = tk.Canvas(row, width=14, height=14, bg=DARK, highlightthickness=0)
+            dot.pack(side="left")
+            dot.create_oval(2, 2, 12, 12, fill=col, outline="")
+            tk.Label(row, text=risk, bg=DARK, fg=col,
+                     font=("Segoe UI", 9, "bold")).pack(side="left", padx=4)
+
+        # Vertical separator
+        tk.Frame(body, bg="#2a3060", width=1).pack(side="left", fill="y")
+
+        # 3D canvas (fills remaining space)
+        self._mol_canvas = Mol3DCanvas(body)
+        self._mol_canvas.pack(side="left", fill="both", expand=True)
+
+    def _populate_3d_tab(self, results, pdb_text):
+        self._3d_results  = results
+        self._3d_pdb_text = pdb_text
+        total = sum(len(e["findings"]) for e in results)
+
+        if not pdb_text:
+            self._3d_status_var.set(
+                f"No PDB provided — {total} liabilities detected (sequence only)")
+            self._mol_canvas.clear()
+            return
+
+        # ── Parse Cα atoms from PDB ───────────────────────────────────────────
+        _aa3 = {
+            "ALA":"A","ARG":"R","ASN":"N","ASP":"D","CYS":"C","GLN":"Q",
+            "GLU":"E","GLY":"G","HIS":"H","ILE":"I","LEU":"L","LYS":"K",
+            "MET":"M","PHE":"F","PRO":"P","SER":"S","THR":"T","TRP":"W",
+            "TYR":"Y","VAL":"V",
+        }
+        ca_by_key: dict = {}  # (chain, resnum) -> [x,y,z]
+        aa_by_key: dict = {}  # (chain, resnum) -> 1-letter
+        for line in pdb_text.splitlines():
+            rec = line[:6].strip()
+            if rec not in ("ATOM", "HETATM"):
+                continue
+            if line[12:16].strip() != "CA":
+                continue
+            try:
+                chain  = line[21].strip() or "A"
+                resnum = int(line[22:26].strip())
+                x, y, z = float(line[30:38]), float(line[38:46]), float(line[46:54])
+            except (ValueError, IndexError):
+                continue
+            key = (chain, resnum)
+            ca_by_key[key] = [x, y, z]
+            aa_by_key[key] = _aa3.get(line[17:20].strip(), "G")
+
+        if not ca_by_key:
+            self._3d_status_var.set("PDB parsed — no Cα atoms found.")
+            self._mol_canvas.clear()
+            return
+
+        # Center coordinates
+        xs = [v[0] for v in ca_by_key.values()]
+        ys = [v[1] for v in ca_by_key.values()]
+        zs = [v[2] for v in ca_by_key.values()]
+        cx = sum(xs) / len(xs)
+        cy = sum(ys) / len(ys)
+        cz = sum(zs) / len(zs)
+        for key in ca_by_key:
+            v = ca_by_key[key]
+            ca_by_key[key] = [v[0] - cx, v[1] - cy, v[2] - cz]
+
+        # ── Build liability and CDR maps keyed by (chain, resnum) ─────────────
+        liability_map: dict = {}  # (chain,resnum) -> {risk, label, size}
+        cdr_name_map:  dict = {}  # (chain,resnum) -> cdr_name
+        ss_map:        dict = {}  # (chain,resnum) -> ss_char
+
+        cdr_scheme = self.v_cdr_scheme.get()
+        _CDR_RISK_SIZE = {"high": 10, "medium": 8, "low": 6, "info": 5}
+
+        for e in results:
+            s2p = e.get("seq_to_pdb", {})
+            seq = e.get("sequence", "")
+            ss  = e.get("ss", "")
+
+            # Secondary structure per residue
+            for pos0, (ch, rn) in s2p.items():
+                if pos0 < len(ss):
+                    ss_map[(ch, rn)] = ss[pos0]
+
+            # Findings
+            for f in e["findings"]:
+                pos0 = f.get("pos0")
+                if pos0 is None:
+                    pos0 = f.get("start", 1) - 1
+                if pos0 not in s2p:
+                    continue
+                key  = s2p[pos0]
+                risk = f.get("risk", "info")
+                existing = liability_map.get(key)
+                if existing is None or _risk_rank(risk) < _risk_rank(existing["risk"]):
+                    raw = re.sub(r'\s*[–—-]\s*(High|Medium|Low|Info)\s*Risk\s*', ' ',
+                                 f.get("label", "")).strip()
+                    short = raw[:15] + "…" if len(raw) > 16 else raw
+                    liability_map[key] = {
+                        "risk":  risk,
+                        "label": f"{pos0+1} {short}",
+                        "size":  _CDR_RISK_SIZE.get(risk, 6),
+                    }
+
+            # CDR regions
+            if hasattr(pla, "annotate_cdrs"):
+                for cs, ce, cname in pla.annotate_cdrs(seq, scheme=cdr_scheme):
+                    for p in range(cs, ce):
+                        if p in s2p:
+                            cdr_name_map[s2p[p]] = cname
+
+        # ── Assemble ordered atom + bond lists ────────────────────────────────
+        _CDR_COLORS_3D = Mol3DCanvas._CDR_COLORS_3D
+        _CHAIN_COLORS  = Mol3DCanvas._CHAIN_COLORS
+        _AA_COLORS     = Mol3DCanvas._AA_COLORS
+
+        chains: dict = {}
+        for (chain, resnum) in ca_by_key:
+            chains.setdefault(chain, []).append(resnum)
+        self._3d_chains = sorted(chains.keys())
+
+        atoms: list = []
+        bonds: list = []
+        for chain in sorted(chains):
+            ci = ord(chain) % len(_CHAIN_COLORS)
+            prev_idx = None
+            for resnum in sorted(chains[chain]):
+                key = (chain, resnum)
+                hl  = liability_map.get(key)
+                cdr = cdr_name_map.get(key, "")
+                ss_char = ss_map.get(key, "")
+                aa = aa_by_key.get(key, "G")
+                atom = {
+                    "xyz":          ca_by_key[key],
+                    "chain":        chain,
+                    "resnum":       resnum,
+                    "aa":           aa,
+                    "color_chain":  _CHAIN_COLORS[ci],
+                    "color_cdr":    _CDR_COLORS_3D.get(cdr, "") if cdr else "",
+                    "color_aa":     _AA_COLORS.get(aa, "#aaaaaa"),
+                    "ss_char":      ss_char,
+                    "is_liability": hl is not None,
+                    "hl_risk":      hl["risk"]  if hl else "",
+                    "hl_label":     hl["label"] if hl else "",
+                    "hl_size":      hl["size"]  if hl else 3,
+                    "cdr_name":     cdr,
+                }
+                idx = len(atoms)
+                atoms.append(atom)
+                if prev_idx is not None:
+                    bonds.append((prev_idx, idx))
+                prev_idx = idx
+
+        mapped = sum(1 for e in results for f in e["findings"]
+                     if (f.get("pos0") or f.get("start", 1) - 1) in e.get("seq_to_pdb", {}))
+        names  = ", ".join(e["name"] for e in results)
+        self._3d_status_var.set(
+            f"{len(atoms)} Cα  ·  {mapped}/{total} liabilities mapped  ·  {names}")
+        self._mol_canvas.load(atoms, bonds)
+
+    def _on_3d_color_change(self):
+        self._mol_canvas.set_color_mode(self._3d_color_mode.get())
+        self._update_3d_legend()
+
+    def _update_3d_legend(self):
+        for w in self._3d_legend_frame.winfo_children():
+            w.destroy()
+        mode = self._3d_color_mode.get()
+
+        def _legend_row(parent, label, col):
+            row = tk.Frame(parent, bg=DARK)
+            row.pack(fill="x", padx=16, pady=1)
+            dot = tk.Canvas(row, width=14, height=14, bg=DARK, highlightthickness=0)
+            dot.pack(side="left")
+            dot.create_oval(2, 2, 12, 12, fill=col, outline="")
+            tk.Label(row, text=label, bg=DARK, fg="#ccccdd",
+                     font=("Segoe UI", 8)).pack(side="left", padx=4)
+
+        if mode == "chain":
+            if self._3d_chains:
+                tk.Label(self._3d_legend_frame, text="CHAIN",
+                         bg=DARK, fg="#aabbff", font=("Segoe UI", 9, "bold"),
+                         anchor="w").pack(fill="x", padx=12, pady=(8, 2))
+                for chain in self._3d_chains:
+                    ci  = ord(chain) % len(Mol3DCanvas._CHAIN_COLORS)
+                    col = Mol3DCanvas._CHAIN_COLORS[ci]
+                    _legend_row(self._3d_legend_frame, f"Chain {chain}", col)
+
+        elif mode == "aa":
+            tk.Label(self._3d_legend_frame, text="AA TYPE",
+                     bg=DARK, fg="#aabbff", font=("Segoe UI", 9, "bold"),
+                     anchor="w").pack(fill="x", padx=12, pady=(8, 2))
+            for lbl, col in [
+                ("Hydrophobic",  "#e8a87c"),
+                ("Aromatic",     "#d4956a"),
+                ("Polar",        "#88d8a3"),
+                ("Cysteine",     "#f5e642"),
+                ("Acidic (D,E)", "#e07070"),
+                ("Basic (K,R)",  "#70a0e0"),
+                ("His (H)",      "#9b80d0"),
+                ("Gly (G)",      "#cccccc"),
+            ]:
+                _legend_row(self._3d_legend_frame, lbl, col)
+
+        elif mode == "ss":
+            tk.Label(self._3d_legend_frame, text="SEC. STRUCTURE",
+                     bg=DARK, fg="#aabbff", font=("Segoe UI", 9, "bold"),
+                     anchor="w").pack(fill="x", padx=12, pady=(8, 2))
+            for lbl, col in [
+                ("Helix",  "#e74c3c"),
+                ("Sheet",  "#3498db"),
+                ("Coil",   "#666688"),
+            ]:
+                _legend_row(self._3d_legend_frame, lbl, col)
+
+    def _update_risk_filter(self):
+        visible = {r for r, v in self._3d_risk_vars.items() if v.get()}
+        self._mol_canvas.set_risk_filter(visible)
 
     def _success(self, results, html_path):
         self._running   = False
@@ -968,8 +1594,9 @@ class App:
             self.btn_html.configure(state="normal", cursor="hand2")
         self.btn_folder.configure(state="normal", cursor="hand2")
 
-        # Populate in-app report and switch to it
+        # Populate in-app report and 3D tab
         self._populate_report(results)
+        self._populate_3d_tab(results, self._3d_pdb_text)
         self.nb.select(2)   # -> Report tab
 
         # Log summary
