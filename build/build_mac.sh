@@ -37,10 +37,18 @@ if ! command -v python3 &>/dev/null; then
 fi
 echo "Python: $(python3 --version)"
 
-# ── Install / upgrade PyInstaller and tk support ──────────────────────────────
+# ── Check PyInstaller and tk support ─────────────────────────────────────────
 echo ""
-echo "[1/4]  Installing PyInstaller..."
-python3 -m pip install --upgrade pyinstaller
+echo "[1/4]  Checking PyInstaller..."
+if command -v pyinstaller &>/dev/null; then
+    echo "  PyInstaller $(pyinstaller --version) found at $(which pyinstaller)"
+elif python3 -m PyInstaller --version &>/dev/null; then
+    echo "  PyInstaller available via python3 -m PyInstaller"
+else
+    echo "  PyInstaller not found — installing..."
+    python3 -m pip install --upgrade pyinstaller || \
+    python3 -m pip install --upgrade pyinstaller --break-system-packages
+fi
 
 # Ensure tkinter is available (Homebrew Python needs python-tk)
 if ! python3 -c "import tkinter" &>/dev/null; then
