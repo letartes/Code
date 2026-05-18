@@ -132,7 +132,7 @@ class Mol3DCanvas(tk.Canvas):
         self._drag_start       = None
         self._color_mode       = "risk"
         self._show_labels      = True
-        self._show_cdr         = True
+        self._show_cdr         = False
         self._risk_filter: set = {"high", "medium", "low", "info"}
 
         self.bind("<ButtonPress-1>", self._on_press)
@@ -1297,7 +1297,6 @@ class App:
         self._3d_color_mode = tk.StringVar(value="risk")
         for val, lbl in [("risk",  "By Risk"),
                          ("chain", "By Chain"),
-                         ("cdr",   "By CDR"),
                          ("aa",    "By AA Type"),
                          ("ss",    "By Sec. Structure")]:
             tk.Radiobutton(
@@ -1305,9 +1304,12 @@ class App:
                 bg=DARK, fg="#ddddee", selectcolor=ACCENT2,
                 activebackground=DARK, activeforeground=WHITE,
                 font=("Segoe UI", 9), anchor="w",
-                command=lambda: self._mol_canvas.set_color_mode(
-                    self._3d_color_mode.get()),
+                command=self._on_3d_color_change,
             ).pack(fill="x", padx=16, pady=1)
+
+        # Dynamic legend (populated by _update_3d_legend when mode is aa or ss)
+        self._3d_legend_frame = tk.Frame(ctrl, bg=DARK)
+        self._3d_legend_frame.pack(fill="x")
 
         _sep()
         _ch("RISK FILTER", bold=True)
@@ -1335,22 +1337,16 @@ class App:
             command=lambda: self._mol_canvas.set_show_labels(
                 self._3d_labels_var.get()),
         ).pack(fill="x", padx=16, pady=1)
-        self._3d_cdr_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(
-            ctrl, text="Highlight CDR", variable=self._3d_cdr_var,
-            bg=DARK, fg="#ccccdd", selectcolor=ACCENT,
-            activebackground=DARK, activeforeground=WHITE,
-            font=("Segoe UI", 9), anchor="w",
-            command=lambda: self._mol_canvas.set_show_cdr(self._3d_cdr_var.get()),
-        ).pack(fill="x", padx=16, pady=1)
 
         _sep()
-        tk.Button(
-            ctrl, text="Reset View", bg=ACCENT, fg=WHITE, relief="flat", bd=0,
-            font=("Segoe UI", 9), padx=8, pady=5, cursor="hand2",
-            activebackground=ACCENT2, activeforeground=WHITE,
-            command=lambda: self._mol_canvas.reset_view(),
-        ).pack(fill="x", padx=12, pady=4)
+        _reset_btn = tk.Label(
+            ctrl, text="Reset View", bg=ACCENT, fg=WHITE,
+            font=("Segoe UI", 9, "bold"), padx=8, pady=5, cursor="hand2",
+        )
+        _reset_btn.pack(fill="x", padx=12, pady=4)
+        _reset_btn.bind("<Button-1>", lambda _: self._mol_canvas.reset_view())
+        _reset_btn.bind("<Enter>",    lambda _: _reset_btn.configure(bg=ACCENT2))
+        _reset_btn.bind("<Leave>",    lambda _: _reset_btn.configure(bg=ACCENT))
 
         _sep()
         _ch("INTERACTION", bold=True)
@@ -1460,11 +1456,10 @@ class App:
                 if existing is None or _risk_rank(risk) < _risk_rank(existing["risk"]):
                     raw = re.sub(r'\s*[–—-]\s*(High|Medium|Low|Info)\s*Risk\s*', ' ',
                                  f.get("label", "")).strip()
-                    aa_char = seq[pos0] if pos0 < len(seq) else "?"
-                    short   = raw[:15] + "…" if len(raw) > 16 else raw
+                    short = raw[:15] + "…" if len(raw) > 16 else raw
                     liability_map[key] = {
                         "risk":  risk,
-                        "label": f"{aa_char}{pos0+1} {short}",
+                        "label": f"{pos0+1} {short}",
                         "size":  _CDR_RISK_SIZE.get(risk, 6),
                     }
 
@@ -1522,6 +1517,51 @@ class App:
         self._3d_status_var.set(
             f"{len(atoms)} Cα  ·  {mapped}/{total} liabilities mapped  ·  {names}")
         self._mol_canvas.load(atoms, bonds)
+
+    def _on_3d_color_change(self):
+        self._mol_canvas.set_color_mode(self._3d_color_mode.get())
+        self._update_3d_legend()
+
+    def _update_3d_legend(self):
+        for w in self._3d_legend_frame.winfo_children():
+            w.destroy()
+        mode = self._3d_color_mode.get()
+
+        def _legend_row(parent, label, col):
+            row = tk.Frame(parent, bg=DARK)
+            row.pack(fill="x", padx=16, pady=1)
+            dot = tk.Canvas(row, width=14, height=14, bg=DARK, highlightthickness=0)
+            dot.pack(side="left")
+            dot.create_oval(2, 2, 12, 12, fill=col, outline="")
+            tk.Label(row, text=label, bg=DARK, fg="#ccccdd",
+                     font=("Segoe UI", 8)).pack(side="left", padx=4)
+
+        if mode == "aa":
+            tk.Label(self._3d_legend_frame, text="AA TYPE",
+                     bg=DARK, fg="#aabbff", font=("Segoe UI", 9, "bold"),
+                     anchor="w").pack(fill="x", padx=12, pady=(8, 2))
+            for lbl, col in [
+                ("Hydrophobic",  "#e8a87c"),
+                ("Aromatic",     "#d4956a"),
+                ("Polar",        "#88d8a3"),
+                ("Cysteine",     "#f5e642"),
+                ("Acidic (D,E)", "#e07070"),
+                ("Basic (K,R)",  "#70a0e0"),
+                ("His (H)",      "#9b80d0"),
+                ("Gly (G)",      "#cccccc"),
+            ]:
+                _legend_row(self._3d_legend_frame, lbl, col)
+
+        elif mode == "ss":
+            tk.Label(self._3d_legend_frame, text="SEC. STRUCTURE",
+                     bg=DARK, fg="#aabbff", font=("Segoe UI", 9, "bold"),
+                     anchor="w").pack(fill="x", padx=12, pady=(8, 2))
+            for lbl, col in [
+                ("Helix",  "#e74c3c"),
+                ("Sheet",  "#3498db"),
+                ("Coil",   "#666688"),
+            ]:
+                _legend_row(self._3d_legend_frame, lbl, col)
 
     def _update_risk_filter(self):
         visible = {r for r, v in self._3d_risk_vars.items() if v.get()}
