@@ -391,12 +391,6 @@
 
       <div class="pat-divider"></div>
 
-      <label>Alignment mode</label>
-      <div class="pat-radio-group">
-        <label><input type="radio" name="pat-mode" value="local" checked> Local (Smith-Waterman)</label>
-        <label><input type="radio" name="pat-mode" value="global"> Global (Needleman-Wunsch)</label>
-      </div>
-
       <label>Gap open</label>
       <input type="number" class="pat-num-input" id="pat-gapopen" value="-11" min="-20" max="0">
 
@@ -1204,7 +1198,7 @@ window.patRun = function() {
   var seqsNamed = patPanels.map(patGetPanelData).filter(Boolean);
   if (seqsNamed.length < 2) { patShowError('Please enter at least 2 sequences.'); return; }
 
-  var mode      = (document.querySelector('input[name="pat-mode"]:checked') || {}).value || 'local';
+  var mode      = 'global';
   var gapOpen   = parseFloat(document.getElementById('pat-gapopen').value)  || -11;
   var gapExtend = parseFloat(document.getElementById('pat-gapext').value)   || -1;
   var ct        = document.getElementById('pat-chain').value;
