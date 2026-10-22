@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mexico in a Bottle Planner</title>
+<style>
+:root{--bg:#f6f1e7;--card:#fff;--ink:#2a2118;--mut:#7a6d5c;--line:#e3d9c6;--acc:#b4531a;--t1:#b4531a;--t2:#c98a1b;--t3:#6f7f5a}
+@media(prefers-color-scheme:dark){:root{--bg:#1b1611;--card:#262019;--ink:#f1e8d8;--mut:#a89c88;--line:#3a3126;--acc:#e07b3c;--t1:#e07b3c;--t2:#e0ad4a;--t3:#93a67a}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 -apple-system,system-ui,sans-serif}
+header{padding:16px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+h1{font-size:18px;margin:0;flex:1}button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:6px 12px;cursor:pointer}
+button.p{background:var(--acc);color:#fff;border-color:var(--acc)}
+main{display:grid;grid-template-columns:minmax(300px,420px) 1fr;gap:16px;padding:16px;max-width:1200px;margin:auto}
+@media(max-width:800px){main{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px}
+.tier{padding:8px 14px;font-weight:600;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut)}
+.row{display:flex;gap:10px;align-items:flex-start;padding:10px 14px;border-top:1px solid var(--line);cursor:pointer}
+.row:hover,.row.sel{background:color-mix(in srgb,var(--acc) 10%,transparent)}
+.row.done .n{text-decoration:line-through;opacity:.55}
+.badge{flex:none;width:26px;height:26px;border-radius:50%;color:#fff;font-weight:700;font-size:13px;display:grid;place-items:center}
+.n{font-weight:600}.g{color:var(--mut);font-size:13px}
+#detail{padding:18px;min-height:300px}.bottle{display:flex;gap:12px;padding:12px 0;border-top:1px solid var(--line)}
+.rank{font-size:22px;font-weight:700;color:var(--acc);width:28px}.bottle a{color:var(--ink);font-weight:600;text-decoration:none}.bottle a:hover{color:var(--acc)}
+.rt{font-variant-numeric:tabular-nums;color:var(--mut);font-size:13px}.bottle img{width:56px;height:56px;object-fit:cover;border-radius:8px}
+textarea,input{font:inherit;width:100%;border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--bg);color:var(--ink)}
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);width:min(640px,92vw)}
+.muted{color:var(--mut)}
+#flt{display:flex;gap:6px;flex-wrap:wrap;padding:10px 14px}#flt button{padding:3px 10px;border-radius:99px;font-size:13px}#flt button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+</style></head><body>
+<header><h1>Mexico in a Bottle · Tasting Planner</h1><span class="muted" id="prog"></span>
+<button id="imp">Import / edit list</button></header>
+<main><section class="card"><div id="flt"></div><div id="list"></div></section><section class="card" id="detail"><p class="muted">Select a palenque to see its mezcales ranked.</p></section></main>
+<dialog id="dlg"><h3 style="margin-top:0">Palenque list</h3>
+<p class="muted">One per line: <b>Name, Tier, Goal</b> (optional 4th column: mezcalreviews.com brand slug, e.g. <code>real-minero</code>). Tab-separated also works, so you can paste from Excel.</p>
+<textarea id="txt" rows="12" placeholder="Real Minero, 1, Taste the Tobala Capón&#10;Lamata, 2, Compare to last year"></textarea>
+<p style="text-align:right"><button id="cancel">Cancel</button> <button class="p" id="save">Save</button></p></dialog>
+<script>
+let P=[],sel=null,flt=new Set();const $=id=>document.getElementById(id);
+const tc=t=>({1:'var(--t1)',2:'var(--t2)'}[t]||'var(--t3)');
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function load(){P=await (await fetch('/api/palenques')).json();render()}
+const persist=()=>fetch('/api/palenques',{method:'PUT',body:JSON.stringify(P)});
+function render(){
+  const tiers=[...new Set(P.map(p=>String(p.tier||'')))].sort((a,b)=>(a||'9')<(b||'9')?-1:1);
+  $('prog').textContent=P.length?`${P.filter(p=>p.done).length}/${P.length} visited`:'';
+  const all=[...new Set(P.map(p=>String(p.tier||'')))].sort((a,b)=>(a||'9')<(b||'9')?-1:1);
+  $('flt').innerHTML=['all',...all].map(t=>`<button data-f="${esc(t)}" class="${(t==='all'?!flt.size:flt.has(t))?'on':''}">${t==='all'?'All':t?'Tier '+esc(t):'Unranked'} (${t==='all'?P.length:P.filter(p=>String(p.tier||'')===t).length})</button>`).join('');
+  const shown=flt.size?tiers.filter(t=>flt.has(t)):tiers;
+  $('list').innerHTML=P.length?shown.map(t=>`<div class="tier">${t?'Tier '+esc(t):'Unranked'}</div>`+P.map((p,i)=>String(p.tier||'')===t?
+   `<div class="row ${i===sel?'sel':''} ${p.done?'done':''}" data-i="${i}"><div class="badge" style="background:${tc(t)}">${t?esc(t):'·'}</div>
+   <div style="flex:1"><div class="n">${esc(p.name)}</div><div class="g">${esc(p.goal)}</div></div>
+   <input type="checkbox" ${p.done?'checked':''} data-c="${i}" style="width:auto" title="Visited"></div>`:'').join('')).join(''):
+   '<p style="padding:16px" class="muted">No palenques yet. Click “Import / edit list”.</p>';
+}
+$('flt').onclick=e=>{const f=e.target.dataset.f;if(f===undefined)return;if(f==='all')flt.clear();else flt.has(f)?flt.delete(f):flt.add(f);render()};
+$('list').onclick=e=>{const c=e.target.dataset.c;if(c!==undefined){P[c].done=e.target.checked;persist();render();return}
+  const r=e.target.closest('.row');if(r){sel=+r.dataset.i;render();show(false)}};
+async function show(force){
+  const p=P[sel];const d=$('detail');
+  d.innerHTML=`<h2 style="margin:0">${esc(p.name)}</h2><div class="g">Tier <select id="tr">${['','1','2','3','4'].map(v=>`<option value="${v}" ${String(p.tier||'')===v?'selected':''}>${v||'Unranked'}</option>`).join('')}</select>${p.goal?' · Goal: '+esc(p.goal):' · No goal set'}</div>
+   <p class="muted" id="st">Fetching rankings from mezcalreviews.com…</p><div id="bl"></div>
+   <h4>Tasting notes</h4><textarea id="nt" rows="4" placeholder="Notes">${esc(p.notes)}</textarea>`;
+  $('tr').onchange=e=>{p.tier=e.target.value;persist();render()};
+  $('nt').oninput=e=>{p.notes=e.target.value;persist()};
+  try{
+    const r=await (await fetch(`/api/mezcals?name=${encodeURIComponent(p.name)}&brand=${encodeURIComponent(p.brand||'')}${force?'&force=1':''}`)).json();
+    if(P[sel]!==p)return;
+    if(r.error)throw new Error(r.error);
+    const all=[...r.top,...r.unrated];
+    $('st').innerHTML=all.length?`${r.top.length} rated of ${r.candidates} listing(s), ranked via ${r.source}${r.matched&&r.matched.length?' (matched: '+esc(r.matched.join(', '))+')':''}. Score weights rating by review count.`:
+      `No listings found on mezcalreviews.com for this name. If it exists there under another name, put that brand slug in the 4th column of the list.`;
+    $('bl').innerHTML=all.map((b,i)=>`<div class="bottle"><div class="rank">${b.rating==null?'–':i+1}</div>
+     ${b.image?`<img src="${esc(b.image)}" alt="">`:''}<div><a href="${esc(b.url)}" target="_blank" rel="noopener">${esc(b.title)}</a>
+     <div class="rt">${b.rating==null?'No member rating yet':`${b.rating.toFixed(1)}/5 · ${b.reviews} review${b.reviews==1?'':'s'}`}</div>
+     <div class="g">${esc(b.blurb)}</div></div></div>`).join('');
+  }catch(e){$('st').textContent='Could not load: '+e.message}
+}
+$('imp').onclick=()=>{$('txt').value=P.map(p=>[p.name,p.tier,p.goal,p.brand||''].join(', ').replace(/, $/,'')).join('\n');$('dlg').showModal()};
+$('cancel').onclick=()=>$('dlg').close();
+$('save').onclick=()=>{const old=Object.fromEntries(P.map(p=>[p.name,p]));
+  P=$('txt').value.split('\n').map(l=>l.trim()).filter(Boolean).map(l=>{
+   const c=(l.includes('\t')?l.split('\t'):l.split(',')).map(s=>s.trim());
+   return{...(old[c[0]]||{}),name:c[0],tier:c[1]||'',goal:c[2]||'',brand:c[3]||''}});
+  sel=null;persist();render();$('dlg').close()};
+load();
+</script></body></html>

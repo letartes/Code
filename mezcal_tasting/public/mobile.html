@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="theme-color" content="#b4531a">
+<title>MiB Tasting</title>
+<style>
+:root{--bg:#f6f1e7;--card:#fff;--ink:#2a2118;--mut:#7a6d5c;--line:#e3d9c6;--acc:#b4531a;--t1:#b4531a;--t2:#c98a1b;--t3:#6f7f5a;--t4:#6b7b8c}
+@media(prefers-color-scheme:dark){:root{--bg:#1b1611;--card:#262019;--ink:#f1e8d8;--mut:#a89c88;--line:#3a3126;--acc:#e07b3c;--t1:#e07b3c;--t2:#e0ad4a;--t3:#93a67a;--t4:#8ea3b8}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%}body{background:var(--bg);color:var(--ink);font:16px/1.4 -apple-system,system-ui,sans-serif;overflow-x:hidden}
+.screen{display:none;min-height:100%;padding-bottom:calc(24px + env(safe-area-inset-bottom))}.screen.on{display:block}
+.top{position:sticky;top:0;z-index:5;background:var(--bg);padding:calc(10px + env(safe-area-inset-top)) 16px 8px;border-bottom:1px solid var(--line)}
+.top h1{font-size:20px;margin:0 0 8px;display:flex;justify-content:space-between;align-items:baseline}.top h1 small{font-size:13px;font-weight:400;color:var(--mut)}
+input,textarea,select{font:inherit;font-size:16px;width:100%;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--card);color:var(--ink)}
+.chips{display:flex;gap:8px;overflow-x:auto;padding:10px 0 2px;scrollbar-width:none}.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:99px;padding:8px 14px;font:inherit;font-size:15px;min-height:40px}
+.chip.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.sec{padding:14px 16px 6px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+.row{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--card);border-top:1px solid var(--line);min-height:64px}
+.row:active{background:color-mix(in srgb,var(--acc) 12%,var(--card))}
+.badge{flex:none;width:32px;height:32px;border-radius:50%;color:#fff;font-weight:700;display:grid;place-items:center;font-size:15px}
+.mid{flex:1;min-width:0}.nm{font-weight:600}.gl{color:var(--mut);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row.done .nm{text-decoration:line-through;opacity:.5}.chev{color:var(--mut);font-size:22px}
+.tick{flex:none;width:44px;height:44px;margin:-8px -6px -8px 0;display:grid;place-items:center}
+.tick span{width:26px;height:26px;border:2px solid var(--line);border-radius:8px;display:grid;place-items:center;color:#fff;font-size:16px}
+.tick.on span{background:var(--t3);border-color:var(--t3)}
+.empty{padding:32px 16px;color:var(--mut);text-align:center}
+/* detail */
+.back{border:0;background:none;color:var(--acc);font:inherit;font-size:17px;padding:8px 0;min-height:44px}
+.dh{padding:0 16px 12px}.dh h2{margin:0 0 4px;font-size:24px}.meta{display:flex;gap:10px;align-items:center;margin-top:10px}
+.meta select{width:auto;flex:none}.vis{flex:1;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;font:inherit;font-size:15px;min-height:44px}
+.vis.on{background:var(--t3);border-color:var(--t3);color:#fff}
+.goal{color:var(--mut);margin-top:6px}.stat{padding:0 16px 10px;color:var(--mut);font-size:13px}
+.b{display:flex;gap:12px;padding:14px 16px;background:var(--card);border-top:1px solid var(--line)}
+.rk{flex:none;width:30px;font-size:22px;font-weight:700;color:var(--acc);text-align:center}
+.b a{color:var(--ink);font-weight:600;text-decoration:none;display:block}.rt{color:var(--acc);font-weight:600;font-size:14px;font-variant-numeric:tabular-nums;margin-top:2px}
+.bl{color:var(--mut);font-size:14px;margin-top:4px}
+.notes{padding:16px}.notes h4{margin:0 0 8px}
+</style></head><body>
+<noscript><div style="padding:24px;font-weight:600">JavaScript is off. Open this file in Safari (tap Share, then Open in Safari), not in the Files preview.</div></noscript>
+<div id="err" style="display:none;padding:12px 16px;background:#b00020;color:#fff;font-size:14px"></div>
+<div class="screen on" id="s1">
+ <div class="top"><h1>Mexico in a Bottle <small id="prog"></small></h1>
+  <input id="q" type="search" placeholder="Search brands" autocomplete="off">
+  <div class="chips" id="chips"></div></div>
+ <div id="list"></div>
+</div>
+<div class="screen" id="s2">
+ <div class="top"><button class="back" id="back">‹ Brands</button></div>
+ <div id="det"></div>
+</div>
+<script>
+window.onerror=function(m,u,l){var e=document.getElementById('err');if(e){e.style.display='block';e.textContent='Error: '+m+' (line '+l+')'}};
+let P=[],flt=new Set(),q='',sel=null;const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const tk=p=>String(p.tier||''),tc=t=>({1:'var(--t1)',2:'var(--t2)',3:'var(--t3)',4:'var(--t4)'}[t]||'var(--mut)');
+const tl=t=>t?'Tier '+t:'Unranked',ord=(a,b)=>(a||'9')<(b||'9')?-1:1;
+const persist=()=>fetch('/api/palenques',{method:'PUT',body:JSON.stringify(P)});
+async function load(){P=await (await fetch('/api/palenques')).json();renderList();route()}
+function renderList(){
+  const tiers=[...new Set(P.map(tk))].sort(ord);
+  $('prog').textContent=`${P.filter(p=>p.done).length}/${P.length} visited`;
+  $('chips').innerHTML=`<button class="chip ${flt.size?'':'on'}" data-f="all">All ${P.length}</button>`+tiers.map(t=>`<button class="chip ${flt.has(t)?'on':''}" data-f="${esc(t)}">${tl(t)} ${P.filter(p=>tk(p)===t).length}</button>`).join('');
+  const ql=q.trim().toLowerCase();
+  const out=tiers.filter(t=>!flt.size||flt.has(t)).map(t=>{
+    const rows=P.map((p,i)=>[p,i]).filter(([p])=>tk(p)===t&&(!ql||(p.name+' '+p.goal).toLowerCase().includes(ql)));
+    return rows.length?`<div class="sec">${tl(t)}</div>`+rows.map(([p,i])=>`<div class="row ${p.done?'done':''}" data-i="${i}">
+      <div class="badge" style="background:${tc(t)}">${t||'·'}</div><div class="mid"><div class="nm">${esc(p.name)}</div><div class="gl">${esc(p.goal)||'&nbsp;'}</div></div>
+      <div class="tick ${p.done?'on':''}" data-d="${i}"><span>${p.done?'✓':''}</span></div><div class="chev">›</div></div>`).join(''):'';
+  }).join('');
+  $('list').innerHTML=out||'<div class="empty">No brands match.</div>';
+}
+$('chips').onclick=e=>{const f=e.target.dataset.f;if(f===undefined)return;f==='all'?flt.clear():flt.has(f)?flt.delete(f):flt.add(f);renderList()};
+$('q').oninput=e=>{q=e.target.value;renderList()};
+$('list').onclick=e=>{
+  const d=e.target.closest('[data-d]');if(d){const p=P[d.dataset.d];p.done=!p.done;persist();renderList();return}
+  const r=e.target.closest('.row');if(r){try{sessionStorage.setItem('scr',window.scrollY)}catch(e){};location.hash='p'+r.dataset.i}};
+$('back').onclick=()=>history.length>1?history.back():(location.hash='');
+function route(){
+  const m=location.hash.match(/^#p(\d+)$/);
+  if(m&&P[m[1]]){sel=+m[1];$('s1').classList.remove('on');$('s2').classList.add('on');window.scrollTo(0,0);detail()}
+  else{sel=null;$('s2').classList.remove('on');$('s1').classList.add('on');renderList();window.scrollTo(0,+(function(){try{return sessionStorage.getItem('scr')}catch(e){return 0}})()||0)}
+}
+window.addEventListener('hashchange',route);
+async function detail(){
+  const i=sel,p=P[i],d=$('det');
+  d.innerHTML=`<div class="dh"><h2>${esc(p.name)}</h2><div class="goal">${p.goal?'Goal: '+esc(p.goal):'No goal set'}</div>
+   <div class="meta"><select id="tr">${['','1','2','3','4'].map(v=>`<option value="${v}" ${tk(p)===v?'selected':''}>${tl(v)}</option>`).join('')}</select>
+   <button class="vis ${p.done?'on':''}" id="vis">${p.done?'✓ Visited':'Mark visited'}</button></div></div>
+   <div class="stat" id="st">Loading rankings…</div><div id="bl"></div>
+   <div class="notes"><h4>Notes</h4><textarea id="nt" rows="4" placeholder="Tasting notes">${esc(p.notes)}</textarea></div>`;
+  $('tr').onchange=e=>{p.tier=e.target.value;persist()};
+  $('vis').onclick=e=>{p.done=!p.done;persist();e.target.classList.toggle('on',p.done);e.target.textContent=p.done?'✓ Visited':'Mark visited'};
+  $('nt').oninput=e=>{p.notes=e.target.value;persist()};
+  try{
+    const r=await (await fetch(`/api/mezcals?name=${encodeURIComponent(p.name)}&brand=${encodeURIComponent(p.brand||'')}`)).json();
+    if(sel!==i)return;if(r.error)throw new Error(r.error);
+    const all=[...r.top,...r.unrated];
+    $('st').textContent=all.length?`${r.top.length} rated of ${r.candidates} listing(s)${r.matched&&r.matched.length?' · '+r.matched.join(', '):''}`:'Not found on mezcalreviews.com';
+    $('bl').innerHTML=all.map((b,k)=>`<div class="b"><div class="rk">${b.rating==null?'–':k+1}</div><div><a href="${esc(b.url)}" target="_blank" rel="noopener">${esc(b.title)}</a>
+      <div class="rt">${b.rating==null?'<span style="color:var(--mut)">No rating yet</span>':b.rating.toFixed(1)+'/5 · '+b.reviews+' review'+(b.reviews==1?'':'s')}</div><div class="bl">${esc(b.blurb)}</div></div></div>`).join('');
+  }catch(e){$('st').textContent='Could not load: '+e.message}
+}
+load().catch(function(e){window.onerror(e&&e.message||e,'',0)});
+</script></body></html>

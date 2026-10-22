@@ -431,6 +431,12 @@
         <div class="amc-metric-sub">Residue monoisotopic sum + one water molecule (18.01056 Da)</div>
       </div>
 
+      <div class="amc-metric">
+        <div class="amc-metric-name">Molecular formula</div>
+        <div id="amc-formula" class="amc-metric-val">—</div>
+        <div class="amc-metric-sub">Elemental composition of the neutral peptide, including the selected cysteine modification. Custom added mass is not reflected.</div>
+      </div>
+
       <!-- Copy buttons -->
       <div class="amc-btn-row" style="margin-bottom:4px">
         <button class="amc-btn-blue" onclick="amcCopyAvg()">Copy average MW</button>
@@ -502,6 +508,10 @@
       .join('');
   }
 
+  function fmtFormula(f) {
+    return f.replace(/(-?\d+)/g, '<sub>$1</sub>');
+  }
+
   /* ── DOM refs ── */
   var seqInput        = document.getElementById('amc-seq');
   var fastaFile       = document.getElementById('amc-fasta-file');
@@ -513,6 +523,7 @@
   var customResEl     = document.getElementById('amc-custom-residue');
   var avgMassEl       = document.getElementById('amc-avg-mass');
   var monoMassEl      = document.getElementById('amc-mono-mass');
+  var formulaEl       = document.getElementById('amc-formula');
   var errorBox        = document.getElementById('amc-error');
   var copyStatus      = document.getElementById('amc-copy-status');
   var statTotal       = document.getElementById('amc-stat-total');
@@ -627,6 +638,7 @@
       statSelected.textContent = '0';
       avgMassEl.textContent  = '—';
       monoMassEl.textContent = '—';
+      formulaEl.textContent  = '—';
       setError(messages.join('\n'));
       return;
     }
@@ -648,6 +660,7 @@
     statSelected.textContent = subseq.length;
     avgMassEl.textContent    = fmtAvg(masses.avg);
     monoMassEl.textContent   = fmtMono(masses.mono);
+    formulaEl.innerHTML     = fmtFormula(calcFormula(currentSubseq, cs.cysteineMod));
 
     if (cs.hasCustomMass && !cs.hasResidueNumber) {
       messages.push('Enter a residue number to apply the arbitrary mass.');
@@ -688,6 +701,7 @@
         statSelected.textContent = '0';
         avgMassEl.textContent  = '—';
         monoMassEl.textContent = '—';
+        formulaEl.textContent  = '—';
         return;
       }
       copyStatus.textContent = 'Highlighted text does not contain supported amino acid codes.';
@@ -930,6 +944,7 @@
       statSelected.textContent = '0';
       avgMassEl.textContent  = '—';
       monoMassEl.textContent = '—';
+      formulaEl.textContent  = '—';
       return;
     }
 
@@ -939,6 +954,7 @@
       statSelected.textContent = '0';
       avgMassEl.textContent  = '—';
       monoMassEl.textContent = '—';
+      formulaEl.textContent  = '—';
       return;
     }
 
@@ -997,6 +1013,7 @@
     statSelected.textContent = best.end - best.start + 1;
     avgMassEl.textContent    = fmtAvg(best.avg);
     monoMassEl.textContent   = fmtMono(best.mono);
+    formulaEl.innerHTML     = fmtFormula(calcFormula(currentSubseq, cs.cysteineMod));
 
     selectedDisplay.innerHTML = results.map(function(r, idx) {
       var sign   = r.diff >= 0 ? '+' : '';
