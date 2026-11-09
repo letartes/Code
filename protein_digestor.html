@@ -458,7 +458,7 @@
     var minLen   = parseInt(document.getElementById('pdt-minlen').value, 10);
     var mc       = parseInt(document.getElementById('pdt-mc').value, 10);
     var peptides = digest(parsed.clean, state.enzyme, minLen, mc, state.cysMod);
-    state.results = { peptides:peptides, seqLen:parsed.clean.length,
+    state.results = { peptides:peptides, seq:parsed.clean, seqLen:parsed.clean.length,
       enzyme:state.enzyme, cysMod:state.cysMod, minLen:minLen, missedMC:mc };
     state.sortKey = 'start'; state.sortDir = 'asc';
     renderResults();
@@ -487,6 +487,38 @@
   function statBox(val, label) {
     return '<div class="pdt-stat"><div class="pdt-stat-val">' + esc(String(val)) +
       '</div><div class="pdt-stat-lbl">' + esc(label) + '</div></div>';
+  }
+
+  function renderCoverage(r) {
+    var covered = new Array(r.seqLen);
+    r.peptides.forEach(function (p) {
+      for (var k = p.start - 1; k < p.end; k++) covered[k] = true;
+    });
+    var nCov = 0, html = '';
+    for (var i = 0; i < r.seqLen; i += 10) {
+      var block = '';
+      for (var k = i; k < Math.min(i + 10, r.seqLen); k++) {
+        if (covered[k]) { nCov++; block += esc(r.seq[k]); }
+        else block += '<span style="background:#ff8e8e;color:#131a2b;font-weight:700;border-radius:2px">' + esc(r.seq[k]) + '</span>';
+      }
+      if (i % 60 === 0) {
+        html += (i ? '</div>' : '') + '<div style="display:flex;gap:14px;margin-bottom:6px">' +
+          '<span style="width:44px;text-align:right;color:#4a5a7a;user-select:none">' + (i + 1) + '</span>';
+      }
+      html += '<span>' + block + '</span>';
+    }
+    html += '</div>';
+    var pct = r.seqLen ? (nCov / r.seqLen * 100) : 0;
+    return '<div class="pdt-card" style="margin-top:20px">' +
+      '<div class="pdt-results-header"><div><h2>Protein Coverage</h2>' +
+      '<p>Residues not present in any generated peptide are highlighted</p></div></div>' +
+      '<div class="pdt-stats-grid" style="grid-template-columns:repeat(3,1fr)">' +
+        statBox(pct.toFixed(1) + '%', 'Sequence Coverage') +
+        statBox(nCov.toLocaleString() + ' AA', 'Covered') +
+        statBox((r.seqLen - nCov).toLocaleString() + ' AA', 'Not Covered') +
+      '</div>' +
+      '<div style="font-family:ui-monospace,monospace;font-size:13px;color:#e8edf7;letter-spacing:0.5px;line-height:1.7;overflow-x:auto">' + html + '</div>' +
+      '</div>';
   }
 
   function renderResults() {
@@ -571,7 +603,7 @@
         '</div>' +
         '<p class="pdt-footnote">\u2020 Masses are monoisotopic and include water (+18.01056\u00a0Da). ' +
         'Cysteine modification: ' + esc(cysMod.label) + esc(cysDeltaNote) + '.</p>' +
-      '</div>';
+      '</div>' + renderCoverage(r);
 
     document.querySelectorAll('#pdt-results .pdt-table th').forEach(function (th) {
       th.addEventListener('click', function () {
